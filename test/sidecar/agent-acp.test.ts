@@ -116,7 +116,9 @@ test('authRequired: session/new failing with auth_required keeps the connection 
     assert.equal(r.exitCode, null, 'agent-type: exitCode null');
     assert.equal(r.authenticated, true);
     assert.deepEqual(agentReceived(files.logFile).find((f) => f.method === 'authenticate')?.params, { methodId: 'agent-login' });
-    if (r.session) assert.equal(typeof r.session.sessionId, 'string'); // §2 pins the session only for the terminal path
+    // Signed in, the session the connect could not open is opened: without it the
+    // app had a sign-in that worked and said it had failed (codex, cline, copilot).
+    assert.equal(typeof r.session?.sessionId, 'string', `${scenario}: a session once signed in`);
   }
   assert.equal(await s.end(), 0);
 });

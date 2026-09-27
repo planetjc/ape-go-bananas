@@ -80,7 +80,9 @@ test('agents/list maps registry entries by distribution and skips the malformed 
   const common = { kind: 'acp', installed: false, installedVersion: null };
   const e = REGISTRY_ENTRIES;
   assert.deepEqual(byId.get('fake-npx'), { ...common, id: e.npx.id, name: e.npx.name, description: e.npx.description, version: FAKE_VERSION, distribution: 'npx', installable: true });
-  assert.deepEqual(byId.get('fake-binary'), { ...common, id: e.binary.id, name: e.binary.name, description: e.binary.description, version: e.binary.version, distribution: 'binary', installable: false });
+  // A binary agent installs where the registry has a build for this machine (the fake has macOS and Linux x64).
+  const built = ['darwin-aarch64', 'darwin-x86_64', 'linux-x86_64'].includes(`${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch === 'arm64' ? 'aarch64' : process.arch === 'x64' ? 'x86_64' : process.arch}`);
+  assert.deepEqual(byId.get('fake-binary'), { ...common, id: e.binary.id, name: e.binary.name, description: e.binary.description, version: e.binary.version, distribution: 'binary', installable: built });
   assert.deepEqual(byId.get('fake-uvx'), { ...common, id: e.uvx.id, name: e.uvx.name, description: e.uvx.description, version: e.uvx.version, distribution: 'uvx', installable: false });
   assert.deepEqual(byId.get('fake-suffixed'), { ...common, id: e.suffixed.id, name: e.suffixed.name, description: e.suffixed.description, version: e.suffixed.version, distribution: 'npx', installable: true });
   assert.equal(typeof r.registry.fetchedAt, 'string', 'fetchedAt after a live fetch');
@@ -198,13 +200,13 @@ test('agents/install for fake-npx: result, prefix layout, progress lines, then a
   assert.equal(await s.end(), 0);
 });
 
-test('agents/install refuses binary and uvx distributions with -32602 and touches nothing', { timeout: TIMEOUT }, async () => {
+test('agents/install refuses a uvx distribution with -32602 and touches nothing (binary ones install: agents-binary.test.ts)', { timeout: TIMEOUT }, async () => {
   const dataDir = makeTmpDir();
   const s = spawnSidecar();
   await s.ready;
   await primed(s, dataDir);
   const seen = npm.requests.length;
-  for (const id of ['fake-binary', 'fake-uvx']) {
+  for (const id of ['fake-uvx']) {
     expectError(await s.request(id, 'agents/install', { dataDir, id, npm: { registry: npm.url } }), -32602, id);
     assert.ok(!existsSync(join(dataDir, 'npx', id)), `${id}: no prefix created`);
     assert.equal(progressFor(s, id).length, 0, `${id}: npm never ran`);

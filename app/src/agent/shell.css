@@ -688,6 +688,12 @@
 .set-rate input:focus-visible { outline: 2px solid var(--banana-edge); outline-offset: 1px; border-color: var(--banana-edge); }
 
 /* ---- the picker (in Settings) --------------------------------------------------- */
+/* A sign-in that takes a key: the field and its button as one. */
+.pk-key { display: inline-flex; align-items: center; gap: 6px; }
+.pk-key input {
+  width: 22ch; background: var(--bg); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 7px 9px; font: inherit; font-size: 12.5px; font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+}
 .pk-current { font-size: 14px; margin: 0 0 10px; }
 .providers { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 9px; }
 .providers li { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 15px; }

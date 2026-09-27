@@ -287,7 +287,7 @@ export interface AcpClient {
    * a credential-bearing request down a flow the agent never offered, so
    * neither is worth a round trip to discover.
    */
-  authenticate(methodId: string): Promise<void>;
+  authenticate(methodId: string, meta?: Record<string, unknown>): Promise<void>;
   /**
    * Ends the authenticated state (#5.4). Rejects without sending anything
    * unless `agentCapabilities.auth.logout` was advertised at initialize.
@@ -911,7 +911,7 @@ class AcpClientImpl implements AcpClient {
   }
 
   /** #5.2; see the AcpClient interface for why both refusals are local. */
-  async authenticate(methodId: string): Promise<void> {
+  async authenticate(methodId: string, meta?: Record<string, unknown>): Promise<void> {
     const method = this.authMethods.find((m) => m.id === methodId);
     if (!method) {
       const known = this.authMethods.map((m) => m.id).join(', ') || '<none>';
@@ -925,7 +925,8 @@ class AcpClientImpl implements AcpClient {
       );
     }
     // #5.2's success result is an empty object carrying nothing to read.
-    await this.transport.request('authenticate', { methodId });
+    // `_meta` (#3) carries what a method asked the client for, such as a key.
+    await this.transport.request('authenticate', meta ? { methodId, _meta: meta } : { methodId });
   }
 
   /** #5.4. */

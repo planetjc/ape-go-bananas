@@ -67,6 +67,8 @@ export interface AuthMethod {
   name: string;
   description?: string | null;
   type?: 'terminal';
+  /** `_meta["api-key"]`: the method takes a key the client collects (codex's "API Key"). */
+  _meta?: Record<string, unknown>;
 }
 
 export interface SelectOption {
@@ -257,8 +259,9 @@ export function makeSidecarClient(host: EngineHost) {
     installProvider: (dataDir: string, id: string) => call<{ id: string; package: string; version: string; bin: string }>('agents/install', { dataDir, id }),
     uninstallProvider: (dataDir: string, id: string) => call<{ id: string; removed: boolean }>('agents/uninstall', { dataDir, id }),
     connect: (params: { provider: string; dataDir: string; cwd: string; apiKey?: string }) => call<ConnectResult>('agent/connect', params),
-    login: (connectionId: string, methodId: string) =>
-      call<{ methodId: string; exitCode: number | null; authenticated: boolean } & Partial<ConnectResult>>('agent/login', { connectionId, methodId }),
+    /** `apiKey` goes with a method that asks for one (`_meta["api-key"]`); the sidecar sends it to the agent and nowhere else. */
+    login: (connectionId: string, methodId: string, apiKey?: string) =>
+      call<{ methodId: string; exitCode: number | null; authenticated: boolean } & Partial<ConnectResult>>('agent/login', apiKey ? { connectionId, methodId, apiKey } : { connectionId, methodId }),
     newSession: (connectionId: string) => call<{ session: SessionInfo }>('agent/newSession', { connectionId }),
     listMethod: () => call<{ dir: string; files: { name: string; title: string; bytes: number }[] }>('method/list'),
     readMethod: (name: string) => call<{ name: string; text: string }>('method/read', { name }),

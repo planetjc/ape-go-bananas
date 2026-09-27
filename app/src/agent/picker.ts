@@ -170,10 +170,22 @@ export function mountPicker(host: HTMLElement, sidecar: SidecarClient, bus: Bus,
   function showAuth(result: ConnectResult): void {
     pending = result;
     auth.classList.remove('hidden');
+    const name = result.agent?.name ?? providers.find((p) => p.id === result.provider)?.name ?? result.provider;
     const status = result.authStatus ? `${result.authStatus.label}` : 'Sign-in needed';
-    auth.innerHTML = `<div class="pname">${esc(result.agent?.name ?? result.provider)} · ${esc(status)}</div>
-      <div class="pactions">${result.authMethods.map((m) => `<button type="button" data-login="${esc(m.id)}" title="${esc(m.description ?? '')}">${esc(m.name)}</button>`).join('')}
-      <button type="button" data-skip="1" class="quiet">Continue anyway</button></div>`;
+    // A method that takes a key (codex's "API Key") gets a field beside its button;
+    // the key goes to the agent with the sign-in and is kept nowhere here.
+    const takesKey = (m: ConnectResult['authMethods'][number]) => typeof m._meta === 'object' && m._meta !== null && 'api-key' in m._meta;
+    const methods = result.authMethods.map((m) =>
+      takesKey(m)
+        ? `<span class="pk-key"><input type="password" data-login-key="${esc(m.id)}" placeholder="API key" autocomplete="off" aria-label="${esc(m.name)}"><button type="button" data-login="${esc(m.id)}" title="${esc(m.description ?? '')}">${esc(m.name)}</button></span>`
+        : `<button type="button" data-login="${esc(m.id)}" title="${esc(m.description ?? '')}">${esc(m.name)}</button>`,
+    );
+    // Some agents sign in only through their own command (auggie): nothing to press here but Reconnect, after.
+    const none = result.authMethods.length === 0 ? `<p class="hint">${esc(name)} offers no way to sign in from here. Sign in with its own command in a terminal (${esc(result.provider === 'auggie' ? 'auggie login' : `its login command`)}), then press Reconnect.</p>` : '';
+    auth.innerHTML = `<div class="pname">${esc(name)} · ${esc(status)}</div>${none}
+      <div class="pactions">${methods.join('')}${
+        none ? `<button type="button" data-use="${esc(result.provider)}">Reconnect</button>` : ''
+      }${result.session ? '<button type="button" data-skip="1" class="quiet">Continue anyway</button>' : ''}</div>`;
   }
 
   async function connect(id: string): Promise<boolean> {
@@ -251,7 +263,8 @@ export function mountPicker(host: HTMLElement, sidecar: SidecarClient, bus: Bus,
       log.textContent = '';
       cb.say('signing in — finish in the browser window that opens…');
       try {
-        const r = await sidecar.login(pending.connectionId, login);
+        const key = host.querySelector<HTMLInputElement>(`input[data-login-key="${CSS.escape(login)}"]`)?.value.trim();
+        const r = await sidecar.login(pending.connectionId, login, key || undefined);
         if (r.authenticated && r.session) {
           cb.say('signed in');
           auth.classList.add('hidden');

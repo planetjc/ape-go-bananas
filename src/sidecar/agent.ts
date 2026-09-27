@@ -32,9 +32,13 @@ import {
 } from '../agent/index.js';
 import {
   BUILT_IN_PROVIDERS,
+  binaryLaunch,
+  binaryTarget,
   installAgent,
   isBuiltIn,
+  launchFor,
   loadRegistry,
+  platformKey,
   resolveBin,
   toProvider,
   isAgentId,
@@ -243,7 +247,7 @@ export class AgentBridge {
   private async install(p: Params) {
     const id = str(p, 'id');
     const { dataDir, entry } = await this.entryFor(p, id);
-    if (entry.distribution !== 'npx') throw new InvalidParams(`params.id: "${id}" is distributed as ${entry.distribution}; only npx entries can be installed`);
+    if (entry.distribution !== 'npx' && binaryTarget(entry) === null) throw new InvalidParams(`params.id: "${id}" is distributed as ${entry.distribution}${entry.distribution === 'binary' ? ` with no build for ${platformKey()}` : ''}; it cannot be installed here`);
     const npm = p.npm as { registry?: unknown } | undefined;
     const registry = typeof npm?.registry === 'string' ? npm.registry : undefined;
     return installAgent(dataDir, entry, {
@@ -264,13 +268,20 @@ export class AgentBridge {
     if (bin === null) throw new Error(`${provider} is not installed (agents/install first)`);
     const extraArgs = Array.isArray(p.extraArgs) ? (p.extraArgs as unknown[]).filter((a): a is string => typeof a === 'string') : [];
     const env = typeof p.env === 'object' && p.env !== null ? (p.env as Record<string, string>) : {};
+    // A binary agent's program runs as itself, with its platform's args; an npx
+    // agent's entry runs on this Node when it is JavaScript, as itself when not.
+    const program = entry.distribution === 'binary' ? { command: bin, args: binaryLaunch(dataDir, entry)?.args ?? [] } : (() => {
+      const l = launchFor(bin);
+      return { command: l.command, args: [...l.args, ...(entry.npx?.args ?? [])] };
+    })();
+    const baseEnv = entry.distribution === 'binary' ? (binaryLaunch(dataDir, entry)?.env ?? {}) : (entry.npx?.env ?? {});
     const connectionId = randomUUID();
     const conn: AcpConnection = {
       kind: 'acp',
       connectionId,
       provider,
       entry,
-      launch: { command: process.execPath, args: [bin, ...(entry.npx?.args ?? []), ...extraArgs], env: { ...(entry.npx?.env ?? {}), ...env }, cwd },
+      launch: { command: program.command, args: [...program.args, ...extraArgs], env: { ...baseEnv, ...env }, cwd },
       client: undefined as unknown as AcpClient,
       authStatus: null,
       sessions: new Map(),
@@ -449,8 +460,15 @@ export class AgentBridge {
     const method = conn.client.authMethods.find((m) => m.id === methodId);
     if (method === undefined) throw new InvalidParams(`params.methodId: "${methodId}" was not advertised`);
     if (method.type !== 'terminal') {
-      await conn.client.authenticate(methodId);
-      return { methodId, exitCode: null, authenticated: true };
+      // A key the method asked for (codex's "API Key": `_meta["api-key"]`) goes with the request, as it expects.
+      const apiKey = typeof p.apiKey === 'string' && p.apiKey ? p.apiKey : null;
+      const wantsKey = typeof method._meta === 'object' && method._meta !== null && 'api-key' in (method._meta as Record<string, unknown>);
+      await conn.client.authenticate(methodId, wantsKey && apiKey ? { 'api-key': { apiKey } } : undefined);
+      // Signed in: the session the connect could not open, opened now -- without
+      // one the shell had a sign-in that worked and nothing to work in, and said
+      // it had failed.
+      const state = conn.sessions.size ? [...conn.sessions.values()][0]! : await this.openAcpSession(conn);
+      return { methodId, exitCode: null, authenticated: state !== null, ...this.connectResult(conn, state) };
     }
     const launch = conn.client.terminalAuthLaunch(methodId);
     const exitCode = await new Promise<number | null>((resolve, reject) => {
