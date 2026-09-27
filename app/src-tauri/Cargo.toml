@@ -1,6 +1,6 @@
 [package]
 name = "ape-app"
-version = "0.1.10"
+version = "0.2.0"
 description = "Tauri shell over the A.P.E. engine"
 edition = "2021"
 
