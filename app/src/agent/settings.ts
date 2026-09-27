@@ -5,6 +5,7 @@
 import type { EngineHost } from '../engine/client.js';
 import { readTheme, setTheme, type Theme } from '../theme.js';
 import { mountSignIn } from './signin.js';
+import { readNewPerDay, setNewPerDay } from './study.js';
 
 export interface SettingsOptions {
   onDone(): void;
@@ -15,6 +16,8 @@ export interface Settings {
   readonly agentSlot: HTMLElement;
   /** Facts that arrive after mount: where the method files are. */
   setMethodDir(dir: string | null): void;
+  /** Whether the School view is in use: its study settings show only then. */
+  setSchool(on: boolean): void;
 }
 
 /** Where people reach the author: forwarded by the domain, so it outlives any one inbox. */
@@ -32,6 +35,11 @@ export function mountSettings(host: HTMLElement, engine: EngineHost, opts: Setti
       <p class="hint">The agent does the reading and writing, on a subscription you already pay for. It runs on this computer, in the course folder, and is connected on its own each time a folder is chosen.</p>
       <div id="set-agent"></div>
       <div id="set-signin"></div>
+    </section>
+    <section class="set-section" id="set-studying" hidden>
+      <h3>Studying</h3>
+      <p class="hint">How many new cards you add a day — set it to match New cards/day in Anki's deck options. A deck in a class with an exam date is sized to what this many a day reviews before that exam.</p>
+      <label class="set-rate"><input type="number" id="set-rate" min="1" max="9999" step="1" inputmode="numeric"> new cards a day</label>
     </section>
     <section class="set-section">
       <h3>Appearance</h3>
@@ -81,6 +89,17 @@ export function mountSettings(host: HTMLElement, engine: EngineHost, opts: Setti
     });
   });
 
+  // New cards a day: kept as typed once it is a whole number; anything else puts the kept one back.
+  const rate = $<HTMLInputElement>('#set-rate');
+  rate.value = String(readNewPerDay());
+  rate.addEventListener('change', () => {
+    const n = Number(rate.value);
+    if (Number.isInteger(n) && n > 0 && n <= 9999) {
+      setNewPerDay(n);
+      opts.say(`${n} new card${n === 1 ? '' : 's'} a day`);
+    } else rate.value = String(readNewPerDay());
+  });
+
   // Appearance. The pressed one is the one in force; the banana marks it.
   const themeGroup = $<HTMLElement>('#set-theme');
   const showTheme = (theme: Theme): void => {
@@ -117,6 +136,9 @@ export function mountSettings(host: HTMLElement, engine: EngineHost, opts: Setti
     agentSlot: $<HTMLElement>('#set-agent'),
     setMethodDir(dir) {
       $<HTMLElement>('#set-method').textContent = dir ?? '(not found — the steps cannot run)';
+    },
+    setSchool(on) {
+      $<HTMLElement>('#set-studying').hidden = !on;
     },
   };
 }

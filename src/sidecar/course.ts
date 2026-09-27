@@ -10,7 +10,8 @@ import { InvalidParams, type MethodHandler } from './methods.js';
 // What the stages write beside the material. None of it is material: listed,
 // it became a tile on the deck screen and a "material" linked into the next
 // stage's prompt, so the writer was handed the audit of its own deck as a source.
-const ARTIFACTS = ['inventory.md', 'plan.md', 'deck.json', 'flags.json', 'review.html', 'audit.md', 'audit.json', 'verdicts.md'] as const;
+// class.md and exams.json are the class brief's, written beside a class's files.
+const ARTIFACTS = ['inventory.md', 'plan.md', 'deck.json', 'flags.json', 'review.html', 'audit.md', 'audit.json', 'verdicts.md', 'class.md', 'exams.json'] as const;
 // Where the page puts what it extracted from a source file: text.md and one
 // image per page under `_extracted/<relPath of the source>/`. Not material,
 // so not listed as files; reported as `extracted` instead.
@@ -177,6 +178,270 @@ function writeFolders(root: string, folders: Iterable<string>): string[] {
 
 /** Whether `name` is `folder` or beneath it. */
 const inFolder = (name: string, folder: string): boolean => name === folder || name.startsWith(`${folder}::`);
+
+// A class is a folder whose decks share one syllabus. Its own files -- the
+// syllabus, exam guides, the schedule -- and the brief the agent writes from
+// them (class.md) live in `<decks root>/.classes/<id>/`, a course folder like
+// any deck's, so adding, removing, extracting and trashing them are the
+// course/* methods as they are. A dot folder, so never listed as a deck. The
+// record in it says which folder it is and when the exams are; the folder is
+// the record's, not the directory name's, so a rename moves no files.
+const CLASSES = '.classes';
+const CLASS_META = '.ape-class.json';
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export interface Exam {
+  id: string;
+  name: string;
+  /** YYYY-MM-DD, or null when the syllabus gives none. */
+  date: string | null;
+  /** What it covers, in the syllabus's words. */
+  covers?: string;
+  /**
+   * "person" once the person has made or changed it by hand: a later paper
+   * never moves it. One the papers gave follows the papers.
+   */
+  setBy?: 'person';
+}
+
+interface ClassRecord {
+  folder: string;
+  exams: Exam[];
+  /** class.md's mtime when the person said it was right; a later write is unread again. */
+  reviewedAt?: number;
+  /** The papers class.md was last written from; one added since is not in the brief yet. */
+  briefFrom?: string[];
+}
+
+export interface ClassSummary {
+  folder: string;
+  path: string;
+  exams: Exam[];
+  brief: 'none' | 'written' | 'reviewed';
+  files: number;
+  /** Papers added since the brief was written, which it does not know yet. */
+  newPapers: string[];
+}
+
+function readClass(dir: string): ClassRecord | null {
+  const data = readJson(join(dir, CLASS_META));
+  if (typeof data !== 'object' || data === null) return null;
+  const d = data as Record<string, unknown>;
+  if (typeof d.folder !== 'string' || !d.folder) return null;
+  const exams = Array.isArray(d.exams) ? d.exams.filter((e): e is Exam => typeof e === 'object' && e !== null && typeof (e as Exam).id === 'string' && typeof (e as Exam).name === 'string') : [];
+  const briefFrom = Array.isArray(d.briefFrom) ? d.briefFrom.filter((f): f is string => typeof f === 'string') : undefined;
+  return { folder: d.folder, exams, ...(typeof d.reviewedAt === 'number' ? { reviewedAt: d.reviewedAt } : {}), ...(briefFrom ? { briefFrom } : {}) };
+}
+
+function writeClass(dir: string, record: ClassRecord): void {
+  writeFileSync(join(dir, CLASS_META), JSON.stringify(record, null, 2) + '\n');
+}
+
+function briefMtime(dir: string): number | null {
+  try {
+    const st = statSync(join(dir, 'class.md'));
+    return st.isFile() ? st.mtimeMs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A class's papers: what the person brought, at the top of its folder -- not what a step made in a subfolder. */
+function papersOf(dir: string): string[] {
+  const files: { name: string; relPath: string; bytes: number; kind: string; mimeType: string }[] = [];
+  listFiles(dir, dir, files);
+  return files.filter((f) => !f.relPath.includes('/') && f.kind !== 'other').map((f) => f.relPath).sort();
+}
+
+function summarize(dir: string, record: ClassRecord): ClassSummary {
+  const papers = papersOf(dir);
+  const at = briefMtime(dir);
+  const brief = at === null ? 'none' : record.reviewedAt === at ? 'reviewed' : 'written';
+  const exams = [...record.exams].sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999'));
+  // A brief from before this was kept knows nothing of what it read, and is taken to have read everything.
+  const newPapers = brief !== 'none' && record.briefFrom ? papers.filter((f) => !record.briefFrom!.includes(f)) : [];
+  return { folder: record.folder, path: dir, exams, brief, files: papers.length, newPapers };
+}
+
+/** Every class under `root`, with its directory. */
+function classesIn(root: string): { dir: string; record: ClassRecord }[] {
+  const base = join(root, CLASSES);
+  if (!isDirectory(base)) return [];
+  const out: { dir: string; record: ClassRecord }[] = [];
+  for (const e of readdirSync(base, { withFileTypes: true })) {
+    if (!e.isDirectory() || e.name.startsWith('.')) continue;
+    const dir = join(base, e.name);
+    const record = readClass(dir);
+    if (record) out.push({ dir, record });
+  }
+  return out.sort((a, b) => a.record.folder.localeCompare(b.record.folder, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+/** `path` as a class directly under `<root>/.classes`, with its record. */
+function classIn(root: string, path: string, field = 'path'): { dir: string; record: ClassRecord } {
+  const full = resolve(path);
+  if (dirname(full) !== resolve(root, CLASSES) || basename(full).startsWith('.')) throw new InvalidParams(`params.${field}: "${path}" is not a class under ${root}`);
+  const record = isDirectory(full) ? readClass(full) : null;
+  if (!record) throw new InvalidParams(`params.${field}: no class at "${path}"`);
+  return { dir: full, record };
+}
+
+/** Today on this machine's calendar, as YYYY-MM-DD: an exam is on a day, not at an instant. */
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * The exams as given, checked; one without an id is given the next free one.
+ * `by` says who is changing them: an exam the person makes or changes is
+ * theirs from then on (setBy); from the papers, each keeps whose it was.
+ */
+function examsFrom(raw: unknown, kept: Exam[], by: 'person' | 'papers' = 'person'): Exam[] {
+  if (!Array.isArray(raw)) throw new InvalidParams('params.exams must be an array');
+  const used = new Set<string>();
+  let n = Math.max(0, ...kept.map((e) => Number(/^e(\d+)$/.exec(e.id)?.[1] ?? 0)));
+  const out: Exam[] = [];
+  raw.forEach((x, i) => {
+    if (typeof x !== 'object' || x === null) throw new InvalidParams(`params.exams[${i}] must be an object`);
+    const e = x as Record<string, unknown>;
+    const name = typeof e.name === 'string' ? e.name.replace(/\s+/g, ' ').trim() : '';
+    if (!name) throw new InvalidParams(`params.exams[${i}].name must name the exam`);
+    const date = e.date === null || e.date === undefined || e.date === '' ? null : e.date;
+    if (date !== null && (typeof date !== 'string' || !DATE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) throw new InvalidParams(`params.exams[${i}].date must be YYYY-MM-DD or null`);
+    let id = typeof e.id === 'string' && e.id && !used.has(e.id) ? e.id : '';
+    if (!id) {
+      n += 1;
+      id = `e${n}`;
+    }
+    used.add(id);
+    const covers = typeof e.covers === 'string' ? e.covers.trim().slice(0, 500) : '';
+    const was = kept.find((k) => k.id === id);
+    const changed = !was || was.name !== name.slice(0, 120) || was.date !== date || (was.covers ?? '') !== covers;
+    const theirs = by === 'person' ? changed || was?.setBy === 'person' : e.setBy === 'person' || was?.setBy === 'person';
+    out.push({ id, name: name.slice(0, 120), date, ...(covers ? { covers } : {}), ...(theirs ? { setBy: 'person' as const } : {}) });
+  });
+  return out;
+}
+
+/**
+ * The exam a deck is studied for: the one it was given, or none if it was
+ * told none; otherwise the next one on the calendar, since a deck is almost
+ * always made for the exam coming up.
+ */
+function examFor(choice: unknown, exams: Exam[]): Exam | null {
+  if (choice === null) return null;
+  const chosen = typeof choice === 'string' ? exams.find((e) => e.id === choice) : undefined;
+  if (chosen) return chosen;
+  const now = today();
+  return exams.filter((e) => e.date !== null && e.date >= now).sort((a, b) => a.date!.localeCompare(b.date!))[0] ?? null;
+}
+
+// A semester is a folder whose classes share a term: "Fall 2026::Histology".
+// It holds no files of its own, only its dates, so it is a record in
+// `<decks root>/.semesters.json` keyed by its folder. Semesters do not nest,
+// do not sit inside a class, and a class does not hold one.
+const SEMESTERS = '.semesters.json';
+
+export interface Semester {
+  folder: string;
+  /** YYYY-MM-DD, or null when not set. */
+  start: string | null;
+  end: string | null;
+}
+
+function readSemesters(root: string): Semester[] {
+  const data = readJson(join(root, SEMESTERS));
+  const list = typeof data === 'object' && data !== null ? (data as Record<string, unknown>).semesters : undefined;
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null && typeof (s as Record<string, unknown>).folder === 'string')
+    .map((s) => ({ folder: s.folder as string, start: typeof s.start === 'string' && DATE.test(s.start) ? s.start : null, end: typeof s.end === 'string' && DATE.test(s.end) ? s.end : null }));
+}
+
+function writeSemesters(root: string, semesters: Semester[]): Semester[] {
+  const list = [...semesters].sort((a, b) => (b.start ?? '').localeCompare(a.start ?? '') || a.folder.localeCompare(b.folder, undefined, { numeric: true, sensitivity: 'base' }));
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, SEMESTERS), JSON.stringify({ semesters: list }, null, 2) + '\n');
+  return list;
+}
+
+/** A date param: YYYY-MM-DD, or null for none. */
+function dateParam(v: unknown, field: string): string | null {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v !== 'string' || !DATE.test(v) || Number.isNaN(Date.parse(`${v}T00:00:00Z`))) throw new InvalidParams(`params.${field} must be YYYY-MM-DD or null`);
+  return v;
+}
+
+/** Start and end, checked together: an end before its start is a typo, not a term. */
+function termDates(p: Record<string, unknown>): { start: string | null; end: string | null } {
+  const start = dateParam(p.start, 'start');
+  const end = dateParam(p.end, 'end');
+  if (start && end && end < start) throw new InvalidParams('params.end must not be before params.start');
+  return { start, end };
+}
+
+/**
+ * Whether folders of these kinds can sit where they are: no semester inside
+ * a semester or a class, no class inside a class. The message names the
+ * first that cannot, or null when all can.
+ */
+function nesting(semesters: string[], classes: string[]): string | null {
+  for (const s of semesters) {
+    const over = semesters.find((o) => o !== s && inFolder(s, o));
+    if (over) return `${s} would be a semester inside the semester ${over}`;
+    const cls = classes.find((c) => inFolder(s, c));
+    if (cls) return `${s} would be a semester inside the class ${cls}`;
+  }
+  for (const c of classes) {
+    const over = classes.find((o) => o !== c && inFolder(c, o));
+    if (over) return `${c} would put one class inside another (${over})`;
+  }
+  return null;
+}
+
+/** A class's folder into `<root>/.trash`, as `<dir>~<ms>`, for classes/restore; the trash empties it in TRASH_DAYS like a deck. */
+function trashClass(root: string, dir: string): string {
+  mkdirSync(join(root, TRASH), { recursive: true });
+  const trashed = join(root, TRASH, `${basename(dir)}~${Date.now()}`);
+  renameSync(dir, trashed);
+  return trashed;
+}
+
+/** A deck's own record, whatever else it holds besides the name. */
+function deckMeta(path: string): Record<string, unknown> {
+  const meta = readJson(join(path, META));
+  return typeof meta === 'object' && meta !== null && !Array.isArray(meta) ? (meta as Record<string, unknown>) : {};
+}
+
+export interface CourseClass extends ClassSummary {
+  /** The exam the deck is studied for; null for none, and for a class's own folder. */
+  exam: Exam | null;
+  /** How it came to be that one: an exam's id, "none", or "next" (the next on the calendar). */
+  choice: string;
+}
+
+/**
+ * The class a course folder belongs to, as its steps are given it: for a
+ * deck, the class whose folder it is in, with the exam it is studied for;
+ * for a class's own folder, itself. Null for a deck in no class, and for a
+ * folder the bridge was opened on outside any decks root.
+ */
+function classOfCourse(path: string): CourseClass | null {
+  const full = resolve(path);
+  const parent = dirname(full);
+  if (basename(parent) === CLASSES) {
+    const record = readClass(full);
+    return record ? { ...summarize(full, record), exam: null, choice: 'next' } : null;
+  }
+  const name = nameOf(full);
+  if (!name) return null;
+  const found = classesIn(parent).find((c) => inFolder(name, c.record.folder));
+  if (!found) return null;
+  const given = deckMeta(full).exam;
+  const kept = typeof given === 'string' && found.record.exams.some((e) => e.id === given);
+  return { ...summarize(found.dir, found.record), exam: examFor(given === null ? null : kept ? given : undefined, found.record.exams), choice: given === null ? 'none' : kept ? (given as string) : 'next' };
+}
 
 /** Every deck under `root` by the name it goes by. */
 function deckNames(root: string): string[] {
@@ -346,6 +611,7 @@ export function courseMethods(): Record<string, MethodHandler> {
         files,
         artifacts: artifactsOf(path),
         extracted: extractedFor(path, files),
+        class: classOfCourse(path),
       };
     },
 
@@ -368,10 +634,13 @@ export function courseMethods(): Record<string, MethodHandler> {
         })
         .sort((a, b) => (a.modified < b.modified ? 1 : a.modified > b.modified ? -1 : 0));
       const kept = readFolders(root);
-      const implied = decks.map((d) => d.name.split('::').slice(0, -1).join('::')).filter(Boolean);
+      const classes = classesIn(root);
+      const semesters = readSemesters(root);
+      // A class's or a semester's folder is kept with the rest, so it shows before any deck is in it.
+      const implied = [...decks.map((d) => d.name.split('::').slice(0, -1).join('::')), ...classes.map((c) => c.record.folder), ...semesters.map((t) => t.folder)].filter(Boolean);
       let folders = withParents([...kept, ...implied]);
       if (folders.length !== kept.length || folders.some((f, i) => f !== kept[i])) folders = writeFolders(root, folders);
-      return { root, decks, folders };
+      return { root, decks, folders, classes: classes.map((c) => summarize(c.dir, c.record)), semesters };
     },
 
     'folders/create': (raw) => {
@@ -390,20 +659,174 @@ export function courseMethods(): Record<string, MethodHandler> {
       const from = deckName(str(p, 'from'), 'from');
       const to = deckName(str(p, 'to'), 'to');
       if (inFolder(to, from) && to !== from) throw new InvalidParams(`params.to: a folder cannot move inside itself`);
+      // A class or a semester goes where its folder goes. A move that would
+      // nest them -- a class in a class, a semester in a semester or a class --
+      // is refused before anything is written.
+      const moved = (f: string): string => (inFolder(f, from) ? to + f.slice(from.length) : f);
+      const classes = classesIn(root).map((c) => ({ ...c, to: moved(c.record.folder) }));
+      const semesters = readSemesters(root);
+      const clash = nesting(semesters.map((t) => moved(t.folder)), classes.map((c) => c.to));
+      if (clash) throw new InvalidParams(`params.to: ${clash}`);
+      for (const c of classes) if (c.to !== c.record.folder) writeClass(c.dir, { ...c.record, folder: c.to });
+      if (semesters.some((t) => moved(t.folder) !== t.folder)) writeSemesters(root, semesters.map((t) => ({ ...t, folder: moved(t.folder) })));
       const folders = readFolders(root).map((f) => (inFolder(f, from) ? to + f.slice(from.length) : f));
       return { name: to, folders: writeFolders(root, folders) };
     },
 
     // Only an empty folder: a deck in it would take the folder straight
     // back, and deleting decks is decks/delete's, one at a time, with Undo.
+    // A class in it goes to the trash, whole -- its syllabus may be the only
+    // copy -- and `classes` is what classes/restore takes to bring it back.
     'folders/delete': (raw) => {
       const p = asParams(raw);
       const root = str(p, 'root');
       const name = deckName(str(p, 'name'), 'name');
       const inside = deckNames(root).filter((d) => d.startsWith(`${name}::`));
       if (inside.length) throw new InvalidParams(`params.name: ${name} still holds ${inside.length} deck${inside.length === 1 ? '' : 's'} — move or delete ${inside.length === 1 ? 'it' : 'them'} first`);
+      const trashed = classesIn(root)
+        .filter((c) => inFolder(c.record.folder, name))
+        .map((c) => trashClass(root, c.dir));
+      // A semester in it goes with it; its dates come back, so Undo can make it again.
+      const terms = readSemesters(root);
+      const gone = terms.filter((t) => inFolder(t.folder, name));
+      if (gone.length) writeSemesters(root, terms.filter((t) => !inFolder(t.folder, name)));
       const kept = readFolders(root);
-      return { name, removed: kept.filter((f) => inFolder(f, name)), folders: writeFolders(root, kept.filter((f) => !inFolder(f, name))) };
+      return { name, removed: kept.filter((f) => inFolder(f, name)), folders: writeFolders(root, kept.filter((f) => !inFolder(f, name))), classes: trashed, semesters: gone };
+    },
+
+    // ---- classes: a folder whose decks share a syllabus, and its exams ----
+
+    'classes/create': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const folder = deckName(str(p, 'folder'), 'folder');
+      const classes = classesIn(root).map((c) => c.record.folder);
+      if (classes.includes(folder)) throw new InvalidParams(`params.folder: ${folder} is a class already`);
+      const terms = readSemesters(root).map((t) => t.folder);
+      if (terms.includes(folder)) throw new InvalidParams(`params.folder: ${folder} is a semester; a class goes inside one`);
+      const clash = nesting(terms, [...classes, folder]);
+      if (clash) throw new InvalidParams(`params.folder: ${clash}`);
+      const base = join(root, CLASSES);
+      mkdirSync(base, { recursive: true });
+      const dir = join(base, freeName(base, folderName(folder)));
+      mkdirSync(dir);
+      const record: ClassRecord = { folder, exams: [] };
+      writeClass(dir, record);
+      writeFolders(root, [...readFolders(root), folder]);
+      return summarize(dir, record);
+    },
+
+    // The exams, whole: what the person sees is what is kept.
+    'classes/update': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const { dir, record } = classIn(root, str(p, 'path'));
+      if (p.by !== undefined && p.by !== 'person' && p.by !== 'papers') throw new InvalidParams('params.by must be "person" or "papers"');
+      const next: ClassRecord = { ...record, exams: examsFrom(p.exams, record.exams, p.by === 'papers' ? 'papers' : 'person') };
+      writeClass(dir, next);
+      return summarize(dir, next);
+    },
+
+    // The person has read class.md and says it is right -- this version of it.
+    'classes/review': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const { dir, record } = classIn(root, str(p, 'path'));
+      const at = briefMtime(dir);
+      if (at === null) throw new InvalidParams('params.path: the class has no class.md to review yet');
+      const next = { ...record, reviewedAt: at };
+      writeClass(dir, next);
+      return summarize(dir, next);
+    },
+
+    // class.md was just written: from these papers. One added after it is not in the brief until it is updated.
+    'classes/briefed': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const { dir, record } = classIn(root, str(p, 'path'));
+      if (briefMtime(dir) === null) throw new InvalidParams('params.path: the class has no class.md yet');
+      const next = { ...record, briefFrom: papersOf(dir) };
+      writeClass(dir, next);
+      return summarize(dir, next);
+    },
+
+    // Back to a plain folder. The class's files go to the trash, whole, for classes/restore.
+    'classes/remove': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const { dir } = classIn(root, str(p, 'path'));
+      return { trashed: trashClass(root, dir) };
+    },
+
+    'classes/restore': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const trashed = resolve(str(p, 'trashed'));
+      if (dirname(trashed) !== resolve(root, TRASH) || !/~\d+$/.test(trashed)) throw new InvalidParams(`params.trashed: "${trashed}" is not a removed class under ${root}`);
+      const record = isDirectory(trashed) ? readClass(trashed) : null;
+      if (!record) throw new InvalidParams(`params.trashed: "${trashed}" is gone`);
+      const clash = nesting(readSemesters(root).map((t) => t.folder), [...classesIn(root).map((c) => c.record.folder), record.folder]);
+      if (clash) throw new InvalidParams(`params.trashed: ${record.folder} cannot be a class again where it is: ${clash}`);
+      const base = join(root, CLASSES);
+      mkdirSync(base, { recursive: true });
+      const dir = join(base, freeName(base, basename(trashed).replace(/~\d+$/, '')));
+      renameSync(trashed, dir);
+      writeFolders(root, [...readFolders(root), record.folder]);
+      return summarize(dir, record);
+    },
+
+    // ---- semesters: a folder whose classes share a term, and its dates ----
+
+    'semesters/create': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const folder = deckName(str(p, 'folder'), 'folder');
+      const terms = readSemesters(root);
+      if (terms.some((t) => t.folder === folder)) throw new InvalidParams(`params.folder: ${folder} is a semester already`);
+      const classes = classesIn(root).map((c) => c.record.folder);
+      if (classes.includes(folder)) throw new InvalidParams(`params.folder: ${folder} is a class; a semester holds classes`);
+      const clash = nesting([...terms.map((t) => t.folder), folder], classes);
+      if (clash) throw new InvalidParams(`params.folder: ${clash}`);
+      const made: Semester = { folder, ...termDates(p) };
+      mkdirSync(root, { recursive: true });
+      writeFolders(root, [...readFolders(root), folder]);
+      return { semester: made, semesters: writeSemesters(root, [...terms, made]) };
+    },
+
+    'semesters/update': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const folder = deckName(str(p, 'folder'), 'folder');
+      const terms = readSemesters(root);
+      if (!terms.some((t) => t.folder === folder)) throw new InvalidParams(`params.folder: ${folder} is not a semester`);
+      const made: Semester = { folder, ...termDates(p) };
+      return { semester: made, semesters: writeSemesters(root, terms.map((t) => (t.folder === folder ? made : t))) };
+    },
+
+    // Back to a plain folder: its classes and decks stay where they are.
+    'semesters/remove': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const folder = deckName(str(p, 'folder'), 'folder');
+      const terms = readSemesters(root);
+      const gone = terms.find((t) => t.folder === folder);
+      if (!gone) throw new InvalidParams(`params.folder: ${folder} is not a semester`);
+      return { removed: gone, semesters: writeSemesters(root, terms.filter((t) => t !== gone)) };
+    },
+
+    // Which exam a deck is studied for: an exam's id, "none", or "next" -- the next on the calendar, as it moves.
+    'decks/exam': (raw) => {
+      const p = asParams(raw);
+      const root = str(p, 'root');
+      const path = deckIn(root, str(p, 'path'));
+      const exam = str(p, 'exam');
+      const cls = classOfCourse(path);
+      if (!cls) throw new InvalidParams('params.path: the deck is in no class, so it has no exams');
+      if (exam !== 'next' && exam !== 'none' && !cls.exams.some((e) => e.id === exam)) throw new InvalidParams(`params.exam: ${cls.folder} has no exam "${exam}"`);
+      const meta = deckMeta(path);
+      delete meta.exam;
+      writeFileSync(join(path, META), JSON.stringify({ ...meta, ...(exam === 'next' ? {} : { exam: exam === 'none' ? null : exam }) }, null, 2) + '\n');
+      return { path, class: classOfCourse(path) };
     },
 
     'decks/create': (raw) => {
@@ -444,7 +867,8 @@ export function courseMethods(): Record<string, MethodHandler> {
         }
         if (moved) writeFileSync(file, JSON.stringify(data, null, 2) + '\n');
       }
-      writeFileSync(join(path, META), JSON.stringify({ name }, null, 2) + '\n');
+      // The rest of the record stays: the exam a deck is studied for is not its name.
+      writeFileSync(join(path, META), JSON.stringify({ ...deckMeta(path), name }, null, 2) + '\n');
       return { name, path, moved };
     },
 
@@ -466,6 +890,7 @@ export function courseMethods(): Record<string, MethodHandler> {
       const trashed = resolve(str(p, 'trashed'));
       if (dirname(trashed) !== resolve(root, TRASH) || !/~\d+$/.test(trashed)) throw new InvalidParams(`params.trashed: "${trashed}" is not a deleted deck under ${root}`);
       if (!isDirectory(trashed)) throw new InvalidParams(`params.trashed: "${trashed}" is gone`);
+      if (readClass(trashed)) throw new InvalidParams(`params.trashed: "${trashed}" is a class; classes/restore brings it back`);
       const folder = freeName(root, basename(trashed).replace(/~\d+$/, ''));
       const path = join(root, folder);
       renameSync(trashed, path);

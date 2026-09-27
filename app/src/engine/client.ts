@@ -148,6 +148,47 @@ export interface DeckSummary {
   modified: string;
 }
 
+export interface Exam {
+  id: string;
+  name: string;
+  /** YYYY-MM-DD, or null when none is known. */
+  date: string | null;
+  covers?: string;
+  /** Made or changed by the person: a later paper never moves it. */
+  setBy?: 'person';
+}
+
+/** A folder whose decks share a syllabus: its own files, the brief written from them, its exams. */
+export interface ClassSummary {
+  /** The folder it is, as Anki's `::` path. */
+  folder: string;
+  /** Its own course folder, where the syllabus and class.md are. */
+  path: string;
+  /** Soonest first; an exam with no date last. */
+  exams: Exam[];
+  /** class.md: not written, written and not yet read, or read and said to be right (that version of it). */
+  brief: 'none' | 'written' | 'reviewed';
+  files: number;
+  /** Papers added since class.md was written, which it does not know yet. Absent from an engine before this was kept. */
+  newPapers?: string[];
+}
+
+/** A folder whose classes share a term: "Fall 2026". Its dates say which one is now. */
+export interface Semester {
+  folder: string;
+  /** YYYY-MM-DD, or null when not set. */
+  start: string | null;
+  end: string | null;
+}
+
+/** The class a course folder is in, as course/list gives it; for a class's own folder, itself. */
+export interface CourseClass extends ClassSummary {
+  /** The exam the deck is studied for; null for none, and for the class's own folder. */
+  exam: Exam | null;
+  /** An exam's id, "none", or "next" (whichever is next on the calendar). */
+  choice: string;
+}
+
 export interface PermissionRequest {
   id: number;
   method: 'agent/requestPermission';
@@ -222,7 +263,7 @@ export function makeSidecarClient(host: EngineHost) {
     listMethod: () => call<{ dir: string; files: { name: string; title: string; bytes: number }[] }>('method/list'),
     readMethod: (name: string) => call<{ name: string; text: string }>('method/read', { name }),
     listCourse: (path: string) =>
-      call<{ path: string; name: string | null; files: CourseFile[]; artifacts: { inventory: boolean; plan: boolean; deck: boolean; flags: boolean; review: boolean }; extracted: Extracted[] }>('course/list', { path }),
+      call<{ path: string; name: string | null; files: CourseFile[]; artifacts: { inventory: boolean; plan: boolean; deck: boolean; flags: boolean; review: boolean }; extracted: Extracted[]; class?: CourseClass | null }>('course/list', { path }),
     readCourse: (path: string, name: string) => call<{ name: string; text: string; bytes: number }>('course/read', { path, name }),
     /** Copies files (or a folder's files, one level) into the course folder by name: the desktop shell's drop and picker. */
     importCourse: (path: string, files: string[]) => call<{ imported: string[] }>('course/import', { path, files }),
@@ -232,13 +273,31 @@ export function makeSidecarClient(host: EngineHost) {
     /** Puts a material removed with `trash` back; its name, numbered if the old one was taken since. */
     restoreCourse: (path: string, trashed: string) => call<{ name: string }>('course/restore', { path, trashed }),
     /** The shell's workspaces: one course folder per deck under `root`, newest first. */
-    listDecks: (root: string) => call<{ root: string; decks: DeckSummary[]; folders?: string[] }>('decks/list', { root }),
+    listDecks: (root: string) => call<{ root: string; decks: DeckSummary[]; folders?: string[]; classes?: ClassSummary[]; semesters?: Semester[] }>('decks/list', { root }),
     /** Folders are Anki's `::` paths, kept under `root` so one can exist empty; its parents are made with it. */
     createFolder: (root: string, name: string) => call<{ name: string; folders: string[] }>('folders/create', { root, name }),
     /** The folder record only; the decks in it are renamed one by one with renameDeck. */
     renameFolder: (root: string, from: string, to: string) => call<{ name: string; folders: string[] }>('folders/rename', { root, from, to }),
     /** An empty folder and its empty subfolders; refused while a deck is beneath. */
-    deleteFolder: (root: string, name: string) => call<{ name: string; removed: string[]; folders: string[] }>('folders/delete', { root, name }),
+    deleteFolder: (root: string, name: string) => call<{ name: string; removed: string[]; folders: string[]; classes?: string[]; semesters?: Semester[] }>('folders/delete', { root, name }),
+    /** Makes a folder a semester (the folder too, if it is new); never inside a class or another semester. */
+    createSemester: (root: string, folder: string, start: string | null, end: string | null) => call<{ semester: Semester; semesters: Semester[] }>('semesters/create', { root, folder, start, end }),
+    updateSemester: (root: string, folder: string, start: string | null, end: string | null) => call<{ semester: Semester; semesters: Semester[] }>('semesters/update', { root, folder, start, end }),
+    /** Back to a plain folder; its classes and decks stay. */
+    removeSemester: (root: string, folder: string) => call<{ removed: Semester; semesters: Semester[] }>('semesters/remove', { root, folder }),
+    /** Makes a folder a class (the folder too, if it is new); refused inside another class or around one. */
+    createClass: (root: string, folder: string) => call<ClassSummary>('classes/create', { root, folder }),
+    /** The class's exams, whole; one without an id is given one. */
+    updateClass: (root: string, path: string, exams: (Omit<Exam, 'id'> & { id?: string })[], by: 'person' | 'papers' = 'person') => call<ClassSummary>('classes/update', { root, path, exams, by }),
+    /** class.md was just written, from the papers there now; one added later is named in newPapers until it is updated. */
+    briefedClass: (root: string, path: string) => call<ClassSummary>('classes/briefed', { root, path }),
+    /** The person has read class.md, as it is now, and says it is right. */
+    reviewClass: (root: string, path: string) => call<ClassSummary>('classes/review', { root, path }),
+    /** Back to a plain folder; the class's files go to the trash, for restoreClass. */
+    removeClass: (root: string, path: string) => call<{ trashed: string }>('classes/remove', { root, path }),
+    restoreClass: (root: string, trashed: string) => call<ClassSummary>('classes/restore', { root, trashed }),
+    /** Which exam a deck in a class is studied for: an exam's id, "none", or "next". */
+    setDeckExam: (root: string, path: string, exam: string) => call<{ path: string; class: CourseClass | null }>('decks/exam', { root, path, exam }),
     createDeck: (root: string, name: string) => call<{ name: string; folder: string; path: string }>('decks/create', { root, name }),
     /** Renames (so moves, in Anki's `::` tree) a deck under `root`; cards already written follow it. */
     renameDeck: (root: string, path: string, name: string) => call<{ name: string; path: string; moved: number }>('decks/rename', { root, path, name }),

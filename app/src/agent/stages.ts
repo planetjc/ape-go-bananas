@@ -23,6 +23,7 @@ import { EngineError, type ConnectResult, type Flag, type SidecarClient, type Se
 import type { Bus } from './bus.js';
 import { mergeFlags } from './flags.js';
 import { STAGES, stepsNote, type Directive, type StepState } from './steps-note.js';
+import { readNewPerDay } from './study.js';
 
 /** Silence long enough to mention, and long enough to worry about. */
 const QUIET_MS = 60_000;
@@ -358,7 +359,8 @@ export function mountStages(rail: HTMLOListElement, bar: HTMLElement, gate: HTML
 
   bar.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
-    if (!b) return;
+    // The bar is a class's while one is open (class-steps.ts); its buttons are not these.
+    if (!b || !host.courseDir()) return;
     if (b.dataset.stop || b.dataset.cancel) {
       // The audit and the adjudicator run in sessions of their own; the runner
       // knows which one is prompting. Between turns there is nothing to cancel,
@@ -809,7 +811,8 @@ export function mountStages(rail: HTMLOListElement, bar: HTMLElement, gate: HTML
   return {
     setConnection(conn) {
       const dir = host.courseDir();
-      runner = conn && conn.session && dir ? makeRunner(sidecar, conn, dir, host.deckName, note) : null;
+      // The rate is read at each run, so a change in Settings reaches the next organize.
+      runner = conn && conn.session && dir ? makeRunner(sidecar, conn, dir, host.deckName, note, () => ({ newPerDay: readNewPerDay() })) : null;
       writerSession = conn?.session?.sessionId ?? null;
       renderBar();
     },

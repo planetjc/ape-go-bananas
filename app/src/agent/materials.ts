@@ -26,6 +26,10 @@ export interface Materials {
   /** Takes the line away: another deck is opening, and its Undo belongs to this one. */
   hideNotice(): void;
   count(): number;
+  /** A deck's lecture files, or a class's own papers: only the words change. */
+  setKind(kind: 'deck' | 'class'): void;
+  /** A class's papers its brief has not read yet, marked on their tiles. */
+  markNew(relPaths: string[]): void;
 }
 
 const KIND: Record<CourseFile['kind'], string> = { pdf: 'PDF', image: 'image', audio: 'audio', video: 'video', text: 'text', slides: 'slides', doc: 'document', other: 'file' };
@@ -74,7 +78,8 @@ export function describe(f: CourseFile, e: Extracted | undefined): string {
 
 export function mountMaterials(host: HTMLElement, opts: MaterialsOptions): Materials {
   host.innerHTML = `
-    <header class="mhead"><h3>Materials <small id="m-count"></small></h3><span class="grow"></span><button type="button" id="m-add" class="quiet">Add files…</button></header>
+    <header class="mhead"><h3><span id="m-title">Materials</span> <small id="m-count"></small></h3><span class="grow"></span><button type="button" id="m-add" class="quiet">Add files…</button></header>
+    <p class="mnote" id="m-note" hidden>Optional — the syllabus, notes, a study guide. The agent turns them into a short brief every deck in this class reads: exam dates, what is off the exam.</p>
     <div id="m-notice"></div>
     <div class="tiles" id="m-tiles"></div>`;
   const $ = <T extends HTMLElement>(sel: string): T => host.querySelector<T>(sel)!;
@@ -82,6 +87,8 @@ export function mountMaterials(host: HTMLElement, opts: MaterialsOptions): Mater
   const notice = mountNotice($<HTMLElement>('#m-notice'));
   let files: CourseFile[] = [];
   let shownMade = false;
+  let kind: 'deck' | 'class' = 'deck';
+  let fresh = new Set<string>();
 
   $<HTMLButtonElement>('#m-add').addEventListener('click', () => opts.onAdd());
   tiles.addEventListener('click', (e) => {
@@ -105,7 +112,8 @@ export function mountMaterials(host: HTMLElement, opts: MaterialsOptions): Mater
   const tile = (f: CourseFile, extracted: Extracted[]): string => {
     const e = extracted.find((x) => x.source === f.relPath);
     const name = f.relPath.includes('/') ? f.relPath : f.name;
-    return `<div class="tile kind-${f.kind}" title="${esc(f.relPath)}"><div class="tkind">${KIND[f.kind]}</div><div class="tname">${esc(name)}</div><div class="tmeta">${esc(describe(f, e))}</div><button type="button" class="tremove" data-remove="${esc(f.relPath)}" title="Remove ${esc(f.name)}" aria-label="Remove ${esc(f.name)}">×</button></div>`;
+    const isNew = fresh.has(f.relPath);
+    return `<div class="tile kind-${f.kind}${isNew ? ' fresh' : ''}" title="${esc(f.relPath)}${isNew ? ' — not in the class brief yet' : ''}"><div class="tkind">${KIND[f.kind]}</div><div class="tname">${esc(name)}</div><div class="tmeta">${esc(describe(f, e))}${isNew ? ' · <span class="tnew">not in the brief yet</span>' : ''}</div><button type="button" class="tremove" data-remove="${esc(f.relPath)}" title="Remove ${esc(f.name)}" aria-label="Remove ${esc(f.name)}">×</button></div>`;
   };
 
   function render(extracted: Extracted[]): void {
@@ -122,7 +130,8 @@ export function mountMaterials(host: HTMLElement, opts: MaterialsOptions): Mater
           return `<div class="shelf">${labelled ? `<div class="shelf-label">${s.label} <small>${s.files.length}</small></div>` : ''}<div class="shelf-tiles">${s.files.map((f) => tile(f, extracted)).join('')}</div></div>`;
         })
         .join('') +
-      `<div class="tile add" role="button" tabindex="0"><div class="tname">${files.length ? 'Add more' : 'Add files'}</div><div class="tmeta">Drop slides as PDF, the transcript, notes — or a whole folder — here</div></div>`;
+      // A class's docs are an option: its button in the header is the way in, and a drop anywhere still works.
+      (kind === 'class' ? '' : `<div class="tile add" role="button" tabindex="0"><div class="tname">${files.length ? 'Add more' : 'Add files'}</div><div class="tmeta">Drop slides as PDF, the transcript, notes — or a whole folder — here</div></div>`);
   }
 
   return {
@@ -134,5 +143,21 @@ export function mountMaterials(host: HTMLElement, opts: MaterialsOptions): Mater
     notify: (text, action) => notice.show(text, action),
     hideNotice: () => notice.hide(),
     count: () => files.length,
+    setKind(k) {
+      if (k === kind) return;
+      kind = k;
+      $('#m-title').textContent = k === 'class' ? 'Class docs' : 'Materials';
+      $('#m-add').textContent = k === 'class' ? 'Add docs…' : 'Add files…';
+      $('#m-note').hidden = k !== 'class';
+      host.classList.toggle('class-docs', k === 'class');
+      if (k === 'deck') fresh = new Set();
+      render(lastExtracted);
+    },
+    markNew(relPaths) {
+      const next = new Set(relPaths);
+      if (next.size === fresh.size && [...next].every((p) => fresh.has(p))) return;
+      fresh = next;
+      render(lastExtracted);
+    },
   };
 }

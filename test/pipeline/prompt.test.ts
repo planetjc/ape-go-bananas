@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { describeExtracted, makeRunner, stageBlocks, WRITING_STAGES, type ContentBlock, type PipelineClient } from '../../dist/pipeline/index.js';
+import { CLASS_STAGE, classUpdateStage, describeExtracted, makeRunner, stageBlocks, timeLine, WRITING_STAGES, type ContentBlock, type CourseClassLike, type PipelineClient } from '../../dist/pipeline/index.js';
 
 const EXTRACT = WRITING_STAGES[0]!;
 const PDF = { relPath: 'L.pdf', kind: 'pdf', bytes: 4096, mimeType: 'application/pdf' };
@@ -75,4 +75,85 @@ test('a stage run carries the shell\'s note on where the deck stands, after the 
   sent.length = 0;
   await makeRunner(c, conn as never, '/c', () => 'Deck').run(EXTRACT);
   assert.ok(!sent[0]!.some((b) => 'text' in b && b.text.startsWith('Steps:')), 'no note when the shell gives none');
+});
+
+// A deck in a class: the class's brief with every writing step, and the exam
+// date with the student's rate only where the deck is sized -- organize.
+const ORGANIZE = WRITING_STAGES.find((w) => w.id === 'organize')!;
+const TODAY = new Date(2026, 8, 27); // Sep 27, local
+const HISTO: CourseClassLike = { folder: 'Year 1::Histology', path: '/classes/histo', brief: 'written', exam: { name: 'Midterm 2', date: '2026-10-14', covers: 'Lectures 5–8' } };
+
+function inClass(cls: CourseClassLike | null, brief = '# Histology brief'): PipelineClient {
+  return client({
+    listCourse: async () => ({ files: [PDF], class: cls }),
+    readCourse: async (path, name) => {
+      if (path === '/classes/histo' && name === 'class.md') return { text: brief };
+      throw new Error(`no ${name}`);
+    },
+  });
+}
+
+test('a deck in a class is given class.md, whole, after the method files, and told what it is', async () => {
+  const b = await stageBlocks(inClass(HISTO), EXTRACT, '/c', 'Year 1::Histology::05 Cartilage', { today: TODAY, newPerDay: 20 });
+  assert.deepEqual(uris(b), ['ape://system', 'text', 'ape://method/SETUP.md', 'file:///classes/histo/class.md', 'file:///c/L.pdf']);
+  assert.equal((b[3] as { resource: { text: string } }).resource.text, '# Histology brief');
+  assert.match(textOf(b), /This deck is in the class Year 1::Histology\. Its class brief, class\.md, is attached below/);
+  assert.doesNotMatch(textOf(b), /Time:/, 'extract is not told the date: it records, it does not size');
+});
+
+test('organize is told the exam, the days left and the room at the student\'s rate', async () => {
+  const b = await stageBlocks(inClass(HISTO), ORGANIZE, '/c', 'Deck', { today: TODAY, newPerDay: 20 });
+  assert.match(textOf(b), /Time: this deck is studied for Midterm 2 on 2026-10-14, 17 days from today \(2026-09-27\)\. The student adds up to 20 new cards a day \(their own setting\), so about 340 new cards can be reviewed before it\. The syllabus says it covers: Lectures 5–8\./);
+});
+
+test('a class with no brief yet, or none at all, attaches nothing', async () => {
+  const none = await stageBlocks(inClass({ ...HISTO, brief: 'none' }), ORGANIZE, '/c', 'Deck', { today: TODAY, newPerDay: 20 });
+  assert.deepEqual(uris(none), ['ape://system', 'text', 'file:///c/L.pdf']);
+  assert.match(textOf(none), /in the class Year 1::Histology, which has no class brief yet\./);
+  const loose = await stageBlocks(inClass(null), ORGANIZE, '/c', 'Deck', { today: TODAY, newPerDay: 20 });
+  assert.doesNotMatch(textOf(loose), /class|Time:/);
+});
+
+test('the time line: nothing without a date ahead; today; a rate not given', () => {
+  assert.equal(timeLine(null, { today: TODAY }), '');
+  assert.equal(timeLine({ name: 'Final', date: null }, { today: TODAY }), '');
+  assert.equal(timeLine({ name: 'Quiz', date: '2026-09-20' }, { today: TODAY }), '', 'an exam already past');
+  assert.match(timeLine({ name: 'Quiz', date: '2026-09-27' }, { today: TODAY, newPerDay: 20 }), /on 2026-09-27, today\. .* about 0 new cards/);
+  assert.match(timeLine({ name: 'Quiz', date: '2026-09-28' }, { today: TODAY }), /1 day from today .* has not said how many new cards a day/);
+});
+
+test('the class brief step runs in the class folder: its papers, no brief of its own attached', async () => {
+  const own: CourseClassLike = { ...HISTO, path: '/classes/histo', exam: null };
+  const b = await stageBlocks(inClass(own), CLASS_STAGE, '/classes/histo', 'Year 1::Histology', { today: TODAY, newPerDay: 20 });
+  assert.deepEqual(uris(b), ['ape://system', 'text', 'file:///classes/histo/L.pdf']);
+  assert.equal((b[0] as { resource: { text: string } }).resource.text, '<0-class.md>');
+  const t = textOf(b);
+  assert.match(t, /^Run this step on the class folder below and write class\.md beside its files\. Also write exams\.json/);
+  assert.match(t, /\n\nClass: Year 1::Histology\nClass folder: \/classes\/histo\n\nFiles:\n- L\.pdf/);
+  assert.doesNotMatch(t, /This deck is in the class|Time:/);
+});
+
+test('a runner hands its stages the options the shell reads at each run', async () => {
+  const sent: ContentBlock[][] = [];
+  const c = inClass(HISTO);
+  c.prompt = async (_id, blocks) => (sent.push(blocks), { stopReason: 'end_turn' });
+  c.isRpcError = () => true; // plan.md not written, as the sidecar would say
+  const conn = { connectionId: 'k', session: { sessionId: 'w' } };
+  let rate = 10;
+  const runner = makeRunner(c, conn as never, '/c', () => 'Deck', undefined, () => ({ newPerDay: rate, today: TODAY }));
+  await runner.run(ORGANIZE);
+  rate = 30;
+  await runner.run(ORGANIZE);
+  assert.match(textOf(sent[0]!), /about 170 new cards/);
+  assert.match(textOf(sent[1]!), /about 510 new cards/);
+});
+
+test('papers added after the brief are folded into it, named, rather than the brief written over', async () => {
+  const own: CourseClassLike = { ...HISTO, exam: null };
+  const b = await stageBlocks(inClass(own), classUpdateStage(['study guide.pdf', 'notes.txt']), '/classes/histo', 'Year 1::Histology', { today: TODAY });
+  assert.equal((b[0] as { resource: { text: string } }).resource.text, '<0-class.md>', 'the same method');
+  const t = textOf(b);
+  assert.match(t, /^class\.md is already written beside the class's papers.*These papers were added since:\n- study guide\.pdf\n- notes\.txt\nRead each of them end to end and fold what they add into class\.md/s);
+  assert.match(t, /Then write exams\.json again/);
+  assert.match(t, /\n\nClass: Year 1::Histology\nClass folder: \/classes\/histo/);
 });

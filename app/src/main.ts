@@ -251,8 +251,8 @@ void (async () => {
     view: $('view-agent'),
     deck,
     keys: secrets,
-    pickFiles: async () => {
-      const picked = await open({ multiple: true, directory: false, title: 'Add lecture files' });
+    pickFiles: async (title) => {
+      const picked = await open({ multiple: true, directory: false, title });
       return Array.isArray(picked) ? picked : typeof picked === 'string' ? [picked] : null;
     },
   });

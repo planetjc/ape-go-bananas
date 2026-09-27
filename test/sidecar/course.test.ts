@@ -5,7 +5,7 @@
 // which spawnSidecar copies from process.env, so each spawn below sets or
 // deletes it on process.env for the duration of the spawn call.
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import test, { after } from 'node:test';
 
@@ -160,7 +160,7 @@ test('course/list: every regular file recursively, sorted by relPath, dotfiles a
   await s.ready;
   const res = await s.request(1, 'course/list', { path: dir });
   assert.equal(res.error, undefined, JSON.stringify(res.error));
-  assert.deepStrictEqual(res.result, { path: dir, name: null, files: EXPECTED_FILES, artifacts: NO_ARTIFACTS, extracted: [] });
+  assert.deepStrictEqual(res.result, { path: dir, name: null, files: EXPECTED_FILES, artifacts: NO_ARTIFACTS, extracted: [], class: null });
   assert.equal(await s.end(), 0);
 });
 
@@ -171,8 +171,8 @@ test('course/list: artifacts are reported, never listed as files; *.apkg is skip
   await s.ready;
   const full = await s.request(1, 'course/list', { path: all.dir });
   assert.equal(full.error, undefined, JSON.stringify(full.error));
-  assert.deepStrictEqual(full.result, { path: all.dir, name: null, files: EXPECTED_FILES, artifacts: { inventory: true, plan: true, deck: true, flags: true, review: true }, extracted: [] });
-  assert.deepStrictEqual((await s.request(2, 'course/list', { path: planOnly.dir })).result, { path: planOnly.dir, name: null, files: EXPECTED_FILES, artifacts: { ...NO_ARTIFACTS, plan: true }, extracted: [] });
+  assert.deepStrictEqual(full.result, { path: all.dir, name: null, files: EXPECTED_FILES, artifacts: { inventory: true, plan: true, deck: true, flags: true, review: true }, extracted: [], class: null });
+  assert.deepStrictEqual((await s.request(2, 'course/list', { path: planOnly.dir })).result, { path: planOnly.dir, name: null, files: EXPECTED_FILES, artifacts: { ...NO_ARTIFACTS, plan: true }, extracted: [], class: null });
   assert.equal(await s.end(), 0);
 });
 
@@ -203,7 +203,7 @@ test('decks/create names a folder from the deck name, numbers a clash; decks/lis
   const root = join(makeTmpDir(), 'decks');
   const s = spawnSidecar();
   await s.ready;
-  assert.deepStrictEqual((await s.request(1, 'decks/list', { root })).result, { root, decks: [], folders: [] }, 'an empty root is created and empty');
+  assert.deepStrictEqual((await s.request(1, 'decks/list', { root })).result, { root, decks: [], folders: [], classes: [], semesters: [] }, 'an empty root is created and empty');
   const a = (await s.request(2, 'decks/create', { root, name: 'Anatomy :: Lecture 3 / part 1' })).result as { name: string; folder: string; path: string };
   assert.equal(a.name, 'Anatomy::Lecture 3 / part 1', 'the name is kept as Anki would read it');
   assert.equal(a.folder, 'Anatomy-Lecture 3 - part 1');
@@ -268,7 +268,7 @@ test('folders: made before any deck, nested, kept once empty; renamed with what 
   const r = (await s.request(1, 'folders/create', { root, name: 'ISF :: Test 2' })).result as { name: string; folders: string[] };
   assert.deepStrictEqual(r, { name: 'ISF::Test 2', folders: ['ISF', 'ISF::Test 2'] }, 'its parents come with it');
   const listed = (await s.request(2, 'decks/list', { root })).result as { decks: unknown[]; folders: string[] };
-  assert.deepStrictEqual(listed, { root, decks: [], folders: ['ISF', 'ISF::Test 2'] }, 'an empty folder is listed');
+  assert.deepStrictEqual(listed, { root, decks: [], folders: ['ISF', 'ISF::Test 2'], classes: [], semesters: [] }, 'an empty folder is listed');
 
   const a = (await s.request(3, 'decks/create', { root, name: 'Year 1::Pharm::Lecture 1' })).result as { path: string };
   assert.deepStrictEqual(((await s.request(4, 'decks/list', { root })).result as { folders: string[] }).folders, ['ISF', 'ISF::Test 2', 'Year 1', 'Year 1::Pharm'], 'a deck\'s folders are kept too');
@@ -284,7 +284,176 @@ test('folders: made before any deck, nested, kept once empty; renamed with what 
   const del = (await s.request(11, 'folders/delete', { root, name: 'Summer' })).result as { removed: string[]; folders: string[] };
   assert.deepStrictEqual(del.folders, ['Year 1', 'Year 1::Pharm'], 'an empty folder goes with its empty subfolders');
   assert.deepStrictEqual(del.removed, ['Summer', 'Summer::ISF', 'Summer::ISF::Test 2'], 'named, so they can be made again');
+  assert.deepStrictEqual((del as { classes?: string[] }).classes, [], 'no class was in it');
+  assert.deepStrictEqual((del as { semesters?: unknown[] }).semesters, [], 'nor a semester');
   expectParamError(await s.request(12, 'folders/create', { root, name: '::' }), 'name', 'an empty name');
+  assert.equal(await s.end(), 0);
+});
+
+/** A day `n` days from today on this machine's calendar, as the engine reads "today". */
+function dayFromToday(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+interface ClassResult { folder: string; path: string; exams: { id: string; name: string; date: string | null; covers?: string; setBy?: string }[]; brief: string; files: number; newPapers?: string[]; exam?: { name: string } | null; choice?: string }
+
+test('classes: a folder made a class keeps its papers apart, lists its exams, reviews its brief by version; one class to a deck', { timeout: TIMEOUT }, async () => {
+  const root = join(makeTmpDir(), 'decks');
+  const s = spawnSidecar();
+  await s.ready;
+  const made = (await s.request(1, 'classes/create', { root, folder: 'Year 1 :: Histology' })).result as ClassResult;
+  assert.equal(made.folder, 'Year 1::Histology', 'the folder is kept as Anki would read it');
+  assert.equal(dirname(made.path), join(root, '.classes'), 'its papers live in a dot folder, never listed as a deck');
+  assert.deepStrictEqual({ ...made, path: '' }, { folder: 'Year 1::Histology', path: '', exams: [], brief: 'none', files: 0, newPapers: [] });
+  const listed = (await s.request(2, 'decks/list', { root })).result as { decks: unknown[]; folders: string[]; classes: ClassResult[] };
+  assert.deepStrictEqual(listed.decks, [], 'the class folder is not a deck');
+  assert.deepStrictEqual(listed.folders, ['Year 1', 'Year 1::Histology'], 'its folder exists before any deck is in it');
+  assert.deepStrictEqual(listed.classes.map((c) => c.folder), ['Year 1::Histology']);
+
+  expectParamError(await s.request(3, 'classes/create', { root, folder: 'Year 1::Histology' }), 'folder', 'a class already');
+  expectParamError(await s.request(4, 'classes/create', { root, folder: 'Year 1' }), 'folder', 'around a class');
+  expectParamError(await s.request(5, 'classes/create', { root, folder: 'Year 1::Histology::Lab' }), 'folder', 'inside a class');
+
+  // Its papers are material; the brief, exams.json and the record are not.
+  writeFileSync(join(made.path, 'syllabus.pdf'), '%PDF-1.4\n');
+  writeFileSync(join(made.path, 'class.md'), '# Histology\n');
+  writeFileSync(join(made.path, 'exams.json'), '[]');
+  const own = (await s.request(6, 'course/list', { path: made.path })).result as { files: { relPath: string }[]; class: ClassResult };
+  assert.deepStrictEqual(own.files.map((f) => f.relPath), ['syllabus.pdf']);
+  assert.equal(own.class.path, made.path, 'a class\'s own folder is listed as its own class');
+  assert.equal(own.class.brief, 'written');
+  assert.equal(own.class.exam, null);
+
+  const future = dayFromToday(30);
+  const past = dayFromToday(-30);
+  const upd = (await s.request(7, 'classes/update', { root, path: made.path, exams: [
+    { name: ' Midterm  2 ', date: future, covers: 'Lectures 5–8' },
+    { name: 'Midterm 1', date: past },
+    { name: 'Final', date: null },
+  ] })).result as ClassResult;
+  assert.deepStrictEqual(upd.exams, [
+    { id: 'e2', name: 'Midterm 1', date: past, setBy: 'person' },
+    { id: 'e1', name: 'Midterm 2', date: future, covers: 'Lectures 5–8', setBy: 'person' },
+    { id: 'e3', name: 'Final', date: null, setBy: 'person' },
+  ], 'ids given in order; listed soonest first, an undated one last; made by hand, so the person\'s');
+  // From the papers, an exam is not the person's; changed by hand afterwards, it is.
+  const fromPapers = (await s.request(71, 'classes/update', { root, path: made.path, by: 'papers', exams: [{ name: 'Quiz', date: future }] })).result as ClassResult;
+  assert.deepStrictEqual(fromPapers.exams, [{ id: 'e4', name: 'Quiz', date: future }]);
+  const unchanged = (await s.request(72, 'classes/update', { root, path: made.path, exams: [{ id: 'e4', name: 'Quiz', date: future }] })).result as ClassResult;
+  assert.equal((unchanged.exams[0] as { setBy?: string }).setBy, undefined, 'saved as it was: still the papers\'');
+  const edited = (await s.request(73, 'classes/update', { root, path: made.path, exams: [{ id: 'e4', name: 'Quiz', date: past }] })).result as ClassResult;
+  assert.equal((edited.exams[0] as { setBy?: string }).setBy, 'person', 'its date changed by hand');
+  expectParamError(await s.request(74, 'classes/update', { root, path: made.path, by: 'agent', exams: [] }), 'by', 'an unknown source');
+  await s.request(75, 'classes/update', { root, path: made.path, exams: upd.exams });
+  expectParamError(await s.request(8, 'classes/update', { root, path: made.path, exams: [{ name: 'X', date: '2026-02-30x' }] }), 'exams', 'not a date');
+  expectParamError(await s.request(9, 'classes/update', { root, path: made.path, exams: [{ name: '  ' }] }), 'exams', 'no name');
+  expectParamError(await s.request(10, 'classes/update', { root, path: root, exams: [] }), 'path', 'not a class');
+
+  const reviewed = (await s.request(11, 'classes/review', { root, path: made.path })).result as ClassResult;
+  assert.equal(reviewed.brief, 'reviewed');
+  // Papers added after the brief are named as not in it, until it is written from them.
+  assert.deepStrictEqual(reviewed.newPapers, [], 'a brief with no record of its papers is taken to have read them all');
+  const briefed = (await s.request(111, 'classes/briefed', { root, path: made.path })).result as ClassResult & { newPapers: string[] };
+  assert.deepStrictEqual(briefed.newPapers, []);
+  writeFileSync(join(made.path, 'study guide.pdf'), '%PDF-1.4\n');
+  writeFileSync(join(made.path, 'notes.txt'), 'notes');
+  mkdirSync(join(made.path, 'converted'));
+  writeFileSync(join(made.path, 'converted', 'made.md'), 'a step made this');
+  assert.deepStrictEqual(((await s.request(112, 'decks/list', { root })).result as { classes: (ClassResult & { newPapers: string[] })[] }).classes[0]!.newPapers, ['notes.txt', 'study guide.pdf'], 'new papers, not what a step made');
+  assert.deepStrictEqual(((await s.request(113, 'classes/briefed', { root, path: made.path })).result as { newPapers: string[] }).newPapers, [], 'written from them: none new');
+  writeFileSync(join(made.path, 'class.md'), '# Histology, again\n');
+  utimesSync(join(made.path, 'class.md'), new Date(), new Date(Date.now() + 5000));
+  assert.equal(((await s.request(12, 'decks/list', { root })).result as { classes: ClassResult[] }).classes[0]!.brief, 'written', 'a rewritten brief is unread again');
+
+  // A deck in the class is given the class, and the next exam unless it was given another.
+  const deck = (await s.request(13, 'decks/create', { root, name: 'Year 1::Histology::03 Cartilage' })).result as { path: string };
+  let cls = ((await s.request(14, 'course/list', { path: deck.path })).result as { class: ClassResult }).class;
+  assert.equal(cls.path, made.path);
+  assert.deepStrictEqual([cls.exam?.name, cls.choice], ['Midterm 2', 'next'], 'the past exam is passed over');
+  cls = ((await s.request(15, 'decks/exam', { root, path: deck.path, exam: 'e3' })).result as { class: ClassResult }).class;
+  assert.deepStrictEqual([cls.exam?.name, cls.choice], ['Final', 'e3']);
+  cls = ((await s.request(16, 'decks/exam', { root, path: deck.path, exam: 'none' })).result as { class: ClassResult }).class;
+  assert.deepStrictEqual([cls.exam, cls.choice], [null, 'none']);
+  expectParamError(await s.request(17, 'decks/exam', { root, path: deck.path, exam: 'e9' }), 'exam', 'no such exam');
+  await s.request(18, 'decks/rename', { root, path: deck.path, name: 'Year 1::Histology::03 Cartilage and bone' });
+  cls = ((await s.request(19, 'course/list', { path: deck.path })).result as { class: ClassResult }).class;
+  assert.equal(cls.choice, 'none', 'a rename keeps the exam the deck was given');
+  const loose = (await s.request(20, 'decks/create', { root, name: 'Loose' })).result as { path: string };
+  assert.equal(((await s.request(21, 'course/list', { path: loose.path })).result as { class: unknown }).class, null);
+  expectParamError(await s.request(22, 'decks/exam', { root, path: loose.path, exam: 'next' }), 'path', 'in no class');
+
+  // The class follows its folder; one moved inside another is refused.
+  await s.request(23, 'folders/rename', { root, from: 'Year 1', to: 'Y1' });
+  assert.equal(((await s.request(24, 'decks/list', { root })).result as { classes: ClassResult[] }).classes[0]!.folder, 'Y1::Histology');
+  const pharm = (await s.request(25, 'classes/create', { root, folder: 'Pharm' })).result as ClassResult;
+  expectParamError(await s.request(26, 'folders/rename', { root, from: 'Pharm', to: 'Y1::Histology::Pharm' }), 'to', 'a class inside a class');
+
+  // Back to a plain folder, and back again; a deck's restore does not take a class.
+  const { trashed } = (await s.request(27, 'classes/remove', { root, path: pharm.path })).result as { trashed: string };
+  const after = (await s.request(28, 'decks/list', { root })).result as { folders: string[]; classes: ClassResult[] };
+  assert.deepStrictEqual(after.classes.map((c) => c.folder), ['Y1::Histology']);
+  assert.ok(after.folders.includes('Pharm'), 'the folder stays');
+  expectParamError(await s.request(29, 'decks/restore', { root, trashed }), 'trashed', 'a class is not a deck');
+  const back = (await s.request(30, 'classes/restore', { root, trashed })).result as ClassResult;
+  assert.equal(back.folder, 'Pharm');
+
+  // Deleting an empty folder takes its class to the trash, for restoring.
+  const del = (await s.request(31, 'folders/delete', { root, name: 'Pharm' })).result as { classes: string[] };
+  assert.equal(del.classes.length, 1);
+  assert.deepStrictEqual(((await s.request(32, 'decks/list', { root })).result as { classes: ClassResult[] }).classes.map((c) => c.folder), ['Y1::Histology']);
+  assert.equal(((await s.request(33, 'classes/restore', { root, trashed: del.classes[0] })).result as ClassResult).folder, 'Pharm');
+  assert.equal(await s.end(), 0);
+});
+
+interface SemesterResult { folder: string; start: string | null; end: string | null }
+
+test('semesters: a folder whose classes share a term, with its dates; they follow their folder and never nest', { timeout: TIMEOUT }, async () => {
+  const root = join(makeTmpDir(), 'decks');
+  const s = spawnSidecar();
+  await s.ready;
+  const made = (await s.request(1, 'semesters/create', { root, folder: 'Fall 2026', start: '2026-08-24', end: '2026-12-18' })).result as { semester: SemesterResult; semesters: SemesterResult[] };
+  assert.deepStrictEqual(made.semester, { folder: 'Fall 2026', start: '2026-08-24', end: '2026-12-18' });
+  await s.request(2, 'semesters/create', { root, folder: 'Spring 2026', start: '2026-01-12', end: null });
+  const listed = (await s.request(3, 'decks/list', { root })).result as { folders: string[]; semesters: SemesterResult[] };
+  assert.deepStrictEqual(listed.folders, ['Fall 2026', 'Spring 2026'], 'a semester is a folder before anything is in it');
+  assert.deepStrictEqual(listed.semesters.map((t) => t.folder), ['Fall 2026', 'Spring 2026'], 'newest term first');
+
+  expectParamError(await s.request(4, 'semesters/create', { root, folder: 'Fall 2026' }), 'folder', 'a semester already');
+  expectParamError(await s.request(5, 'semesters/create', { root, folder: 'Fall 2026::Block 1' }), 'folder', 'a semester inside a semester');
+  expectParamError(await s.request(6, 'semesters/create', { root, folder: 'X', start: '2026-09-01', end: '2026-08-01' }), 'end', 'an end before its start');
+  expectParamError(await s.request(7, 'semesters/create', { root, folder: 'X', start: 'Sept' }), 'start', 'not a date');
+
+  // Classes go inside a semester; a semester goes inside no class, and no class is one.
+  const cls = (await s.request(8, 'classes/create', { root, folder: 'Fall 2026::Histology' })).result as ClassResult;
+  assert.equal(cls.folder, 'Fall 2026::Histology');
+  expectParamError(await s.request(9, 'classes/create', { root, folder: 'Spring 2026' }), 'folder', 'a semester is not a class');
+  expectParamError(await s.request(10, 'semesters/create', { root, folder: 'Fall 2026::Histology' }), 'folder', 'a class is not a semester');
+  expectParamError(await s.request(11, 'semesters/create', { root, folder: 'Fall 2026::Histology::Term' }), 'folder', 'inside a class');
+  expectParamError(await s.request(12, 'folders/rename', { root, from: 'Spring 2026', to: 'Fall 2026::Spring' }), 'to', 'a semester moved into a semester');
+
+  // A class moved from one semester to another is a folder rename; its record follows.
+  await s.request(13, 'folders/rename', { root, from: 'Fall 2026::Histology', to: 'Spring 2026::Histology' });
+  assert.equal(((await s.request(14, 'decks/list', { root })).result as { classes: ClassResult[] }).classes[0]!.folder, 'Spring 2026::Histology');
+  // A semester renamed takes its dates and its classes along.
+  await s.request(15, 'folders/rename', { root, from: 'Spring 2026', to: 'Year 1::Spring 2026' });
+  const after = (await s.request(16, 'decks/list', { root })).result as { classes: ClassResult[]; semesters: SemesterResult[] };
+  assert.deepStrictEqual(after.semesters.find((t) => t.folder === 'Year 1::Spring 2026'), { folder: 'Year 1::Spring 2026', start: '2026-01-12', end: null });
+  assert.equal(after.classes[0]!.folder, 'Year 1::Spring 2026::Histology');
+
+  const upd = (await s.request(17, 'semesters/update', { root, folder: 'Fall 2026', start: '2026-08-20', end: '2026-12-20' })).result as { semester: SemesterResult };
+  assert.deepStrictEqual(upd.semester, { folder: 'Fall 2026', start: '2026-08-20', end: '2026-12-20' });
+  expectParamError(await s.request(18, 'semesters/update', { root, folder: 'Nope' }), 'folder', 'not a semester');
+
+  // Made plain, the folder stays; deleted, its dates come back for Undo, and its classes go to the trash.
+  const plain = (await s.request(19, 'semesters/remove', { root, folder: 'Fall 2026' })).result as { removed: SemesterResult; semesters: SemesterResult[] };
+  assert.deepStrictEqual(plain.removed, { folder: 'Fall 2026', start: '2026-08-20', end: '2026-12-20' });
+  assert.ok(((await s.request(20, 'decks/list', { root })).result as { folders: string[] }).folders.includes('Fall 2026'));
+  const del = (await s.request(21, 'folders/delete', { root, name: 'Year 1' })).result as { classes: string[]; semesters: SemesterResult[] };
+  assert.deepStrictEqual(del.semesters, [{ folder: 'Year 1::Spring 2026', start: '2026-01-12', end: null }]);
+  assert.equal(del.classes.length, 1, 'the class inside went to the trash');
+  assert.deepStrictEqual(((await s.request(22, 'decks/list', { root })).result as { semesters: SemesterResult[] }).semesters, []);
   assert.equal(await s.end(), 0);
 });
 

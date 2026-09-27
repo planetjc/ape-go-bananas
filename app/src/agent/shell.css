@@ -215,7 +215,7 @@
 .crumb-path strong { color: var(--fg); font-weight: 600; }
 
 /* ---- home, settings ----------------------------------------------------------- */
-.home-pane, .settings-pane { padding: 8px 4px; max-width: 78ch; }
+.home-pane, .settings-pane, .school-pane { padding: 8px 4px; max-width: 78ch; }
 .home h2, .settings-pane h2 {
   font-size: 28px; margin: 0 0 6px; font-weight: 700; letter-spacing: -.015em;
   font-variation-settings: var(--voice-display);
@@ -491,6 +491,201 @@
   font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
   font-size: 12.5px; line-height: 1.75; white-space: pre-wrap;
 }
+
+/* ---- Decks or School -------------------------------------------------------------- */
+/* Two ways to see one library, switched under the wordmark. The pressed one
+   is banana, as the theme switch is. */
+.viewswitch {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin: 8px 0 10px; padding: 3px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 9px;
+}
+.viewswitch > button {
+  background: transparent; color: var(--muted); border: 0; border-radius: 6px; padding: 5px 0;
+  font-size: 12.5px; font-weight: 500;
+}
+.viewswitch > button:hover { background: var(--raised); color: var(--fg); filter: none; }
+.viewswitch > button[aria-pressed='true'] { background: var(--banana); color: var(--on-banana); font-weight: 600; }
+
+/* A tag for a class: small, mono, banana-edged -- in the crumb, the rail. */
+.dclass, .lmark {
+  display: inline-block; padding: 0 6px; border: 1px solid var(--banana-edge); border-radius: 9px;
+  font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+  font-size: 10px; line-height: 16px; font-weight: 500; letter-spacing: .04em; color: var(--accent);
+  text-transform: uppercase; flex: none;
+}
+.dnow, .lmark.lnow {
+  display: inline-block; padding: 0 7px; border: 0; border-radius: 9px; background: var(--banana); color: var(--on-banana);
+  font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+  font-size: 10px; line-height: 16px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; flex: none;
+}
+.lmark.lnow { font-size: 9px; line-height: 14px; }
+
+/* ---- the School view ---------------------------------------------------------------- */
+/* A semester is a section; each class in it a card, with what is next for it. */
+.school-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.school-head h2 { margin: 0; }
+.school-head button.quiet { padding: 7px 14px; }
+.term { margin: 0 0 22px; }
+.term-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 32px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.term-fold {
+  display: inline-flex; align-items: center; gap: 8px; background: transparent; color: var(--fg); border: 0; padding: 2px 6px 2px 0;
+  font-size: 17px; font-weight: 650; font-variation-settings: var(--voice-display);
+}
+.term-fold:hover { filter: none; }
+.term-fold[aria-expanded='true'] .dchev { transform: rotate(90deg); }
+.term-plain { font-size: 15px; font-weight: 650; font-variation-settings: var(--voice-display); }
+.dterm-range, .term-when { font-size: 12px; color: var(--muted); font-family: var(--font-mono); font-variation-settings: var(--voice-mono); }
+.term.past .term-fold, .term.past .dterm-range { opacity: .6; }
+.term-acts { display: inline-flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+.term-head:hover .term-acts, .term-head:focus-within .term-acts { opacity: 1; }
+.term-acts button { padding: 3px 10px; font-size: 11.5px; border-radius: 14px; }
+.term-acts button.danger { color: var(--bad); }
+@media (hover: none) { .term-acts { opacity: 1; } }
+.sedit { padding: 8px 0 0; }
+.sedit > span { font-size: 13px; }
+.sedit input[type='date'] { flex: none; min-width: 0; }
+
+.coming { margin: 12px 0 0; }
+.coming .railhead { margin: 0 0 4px; }
+.hexams { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.hexams li { display: grid; grid-template-columns: 7ch minmax(10ch, max-content) 1fr max-content; align-items: baseline; gap: 12px; font-size: 13px; }
+.hx-date { font-family: var(--font-mono); font-variation-settings: var(--voice-mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+.hx-class { font-size: 12.5px; color: var(--muted); text-decoration: none; justify-self: start; }
+.hx-class:hover { color: var(--fg); text-decoration: underline; }
+.hx-when { color: var(--muted); font-size: 12px; }
+
+.ccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 12px 0 0; }
+.ccard {
+  display: grid; gap: 4px; align-content: start; text-align: left; min-height: 92px; padding: 13px 15px;
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 12px;
+  font-weight: 400; font-variation-settings: var(--voice-body);
+}
+.ccard:hover { border-color: var(--banana-edge); background: var(--raised); filter: none; }
+.ccard.open { border-color: var(--banana-edge); box-shadow: inset 3px 0 0 var(--banana); }
+.ccard-name { font-size: 15px; font-weight: 650; font-variation-settings: var(--voice-display); overflow-wrap: anywhere; }
+.ccard-exam { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+.ccard-exam.none { color: var(--muted); font-weight: 400; }
+.ccard-meta { font-size: 12px; color: var(--muted); }
+.ccard.add { border-style: dashed; border-color: var(--line-strong); background: transparent; align-content: center; }
+.ccard.add .ccard-name { color: var(--accent); font-size: 14px; }
+
+.school-empty { padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.school-empty p { margin: 0 0 10px; color: var(--fg); }
+.school-empty ul { margin: 0 0 14px; padding-left: 1.2em; color: var(--muted); font-size: 13px; display: grid; gap: 6px; }
+.school-empty li::marker { color: var(--banana-edge); }
+.school-foot { margin: 8px 0 0; }
+.lib .lterm { padding: 8px 8px 2px 11px; display: flex; align-items: baseline; gap: 8px; font-size: 12px; font-weight: 600; font-family: var(--font-mono); font-variation-settings: var(--voice-mono); }
+
+/* The New class and New semester forms: a panel above the list. */
+.sform { display: grid; gap: 10px; margin: 0 0 18px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--banana-edge); border-radius: 12px; }
+.sform h3 { margin: 0; font-size: 15px; font-weight: 650; font-variation-settings: var(--voice-display); }
+.sform .hint { margin: 0; }
+.srow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.srow[hidden] { display: none; }
+.sform input {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 7px; padding: 8px 10px;
+  font: inherit; font-size: 13.5px; font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+}
+.sform input[name=name] { flex: 1; min-width: 200px; }
+.sform input[name=termName] { width: 16ch; }
+.sform input[type='date'] { font-size: 12.5px; color-scheme: light dark; }
+.sform input:focus-visible { outline: 2px solid var(--banana-edge); outline-offset: 1px; border-color: var(--banana-edge); }
+.sform input:disabled { opacity: .6; }
+.dterm-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.dterm-pick select, .class-term select, .cs-exam select {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--line-strong); border-radius: 7px;
+  padding: 5px 8px; font: inherit; font-size: 12.5px; max-width: 38ch;
+}
+
+/* ---- a class's screen: its decks, its exams, its papers ------------------------------- */
+.class-pane { flex: none; }
+.rail-class-name {
+  font-family: var(--font-mono); font-variation-settings: var(--voice-mono); font-size: 14px; font-weight: 600;
+  padding: 4px 0 2px; overflow-wrap: anywhere;
+}
+.rail-class-empty { margin: 4px 0 0 11px; }
+.cdecks { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 6px; }
+.cdeck {
+  display: grid; grid-template-columns: minmax(0, 1fr) max-content; grid-template-rows: auto auto; gap: 2px 18px; width: 100%;
+  align-items: center; text-align: left; padding: 10px 14px; background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 10px; font-weight: 400; font-variation-settings: var(--voice-body);
+}
+.cdeck:hover { border-color: var(--banana-edge); background: var(--raised); filter: none; }
+.cdeck strong { font-family: var(--font-mono); font-variation-settings: var(--voice-mono); font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cdeck-state { grid-column: 1; font-size: 12px; color: var(--muted); }
+.cdeck .dsteps .dcount { font-size: 11.5px; color: var(--muted); }
+.cnewdeck { display: flex; gap: 8px; margin: 0 0 18px; }
+.cnewdeck input {
+  flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px dashed var(--line-strong); border-radius: 8px; padding: 9px 12px;
+  font: inherit; font-size: 13.5px; font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+}
+.cnewdeck input:focus-visible { outline: 2px solid var(--banana-edge); outline-offset: 1px; border-style: solid; border-color: var(--banana-edge); }
+.exams { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.exam {
+  display: grid; grid-template-columns: minmax(12ch, 1.1fr) 150px minmax(12ch, 1.4fr) minmax(16ch, 1.4fr) 26px;
+  align-items: center; gap: 8px; padding: 5px 6px 5px 8px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.exam.draft { border-style: dashed; border-color: var(--banana-edge); }
+.exam input {
+  min-width: 0; background: transparent; color: var(--fg); border: 1px solid transparent; border-radius: 6px;
+  padding: 5px 7px; font: inherit; font-size: 13px;
+}
+.exam .ex-name { font-weight: 600; }
+.exam .ex-date { font-family: var(--font-mono); font-variation-settings: var(--voice-mono); font-size: 12.5px; color-scheme: light dark; }
+.exam input:hover { border-color: var(--line); }
+.exam input:focus-visible { outline: 2px solid var(--banana-edge); outline-offset: 0; border-color: var(--banana-edge); background: var(--bg); }
+.ex-when { font-size: 12px; color: var(--muted); }
+.ex-when.past { text-decoration: line-through; opacity: .7; }
+.exam .tremove { background: transparent; color: var(--muted); border: 0; padding: 0 4px; font-size: 15px; line-height: 1; font-weight: 400; }
+.exam .tremove:hover { color: var(--bad); filter: none; }
+.exams-empty { margin: 0 0 4px; }
+.class-pane .hint { margin: 10px 0 0; }
+.class-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px; font-size: 13px; }
+.class-foot button { padding: 5px 12px; font-size: 12px; }
+.class-foot button.danger { background: var(--bad); color: var(--panel); }
+.class-term { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 760px) {
+  .exam { grid-template-columns: 1fr 150px 26px; }
+  .exam .ex-covers, .exam .ex-when { grid-column: 1 / -1; }
+}
+
+/* A class's docs: an option, so a plain section with a one-line note, and the brief's state on one line under it. */
+.materials.class-docs .mnote { margin: -4px 0 10px; font-size: 12.5px; color: var(--muted); }
+.class-brief { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 20px; font-size: 13px; }
+.class-brief:empty { display: none; }
+.class-brief .cb-text { color: var(--muted); }
+.class-brief .cb-text strong { color: var(--fg); font-weight: 600; }
+.class-brief .cb-ok { color: var(--good); font-weight: 600; }
+.class-brief button { padding: 5px 12px; font-size: 12.5px; }
+.class-brief .nb-spin { width: 14px; height: 14px; border-width: 2px; border-color: var(--line-strong); border-top-color: var(--accent); }
+.class-brief .nb-elapsed { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.class-brief .nb-idle { color: var(--muted); }
+
+/* A paper the class brief has not read yet: banana-edged until the brief is updated. */
+.tile.fresh { border-color: var(--banana-edge); background: var(--raised); }
+.tile .tnew { color: var(--accent); font-weight: 600; }
+
+/* On a deck in a class: which class, which exam, and the room before it. */
+.class-strip {
+  display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--banana); border-radius: 10px; font-size: 13px;
+}
+.cs-k {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: var(--muted);
+  font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+}
+.class-strip .cs-name { font-family: var(--font-mono); font-variation-settings: var(--voice-mono); font-weight: 600; text-decoration: none; color: var(--fg); }
+.class-strip .cs-name:hover { text-decoration: underline; }
+.cs-brief, .cs-when { color: var(--muted); font-size: 12px; }
+.cs-exam { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12.5px; }
+.gate-lead { margin: 0; padding: 10px 18px 0; font-size: 13px; color: var(--fg); }
+.set-rate { display: inline-flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.set-rate input {
+  width: 8ch; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 7px 10px; font: inherit; font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
+}
+.set-rate input:focus-visible { outline: 2px solid var(--banana-edge); outline-offset: 1px; border-color: var(--banana-edge); }
 
 /* ---- the picker (in Settings) --------------------------------------------------- */
 .pk-current { font-size: 14px; margin: 0 0 10px; }
