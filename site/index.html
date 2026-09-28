@@ -205,6 +205,7 @@ footer .wrap > div {
 .h-t1 { animation-name: kh-t1; }
 .h-t2 { animation-name: kh-t2; }
 .h-t3 { animation-name: kh-t3; }
+.h-pile { animation-name: kh-pile; }
 .h-count { animation-name: kh-count; }
 
 @keyframes kh-tick {
@@ -309,22 +310,25 @@ footer .wrap > div {
   0%, 42.5% { opacity: 0; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   43.2% { opacity: 1; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   46.5% { opacity: 1; transform: translate(-190px, -120px) scale(0.8) rotate(-6deg); }
-  50%, 95% { opacity: 1; transform: translate(0, 0) scale(1) rotate(-3deg); }
-  97%, 100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(-3deg); }
+  50%, 100% { opacity: 1; transform: translate(0, 0) scale(1) rotate(-3deg); }
 }
 @keyframes kh-t2 {
   0%, 47% { opacity: 0; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   47.7% { opacity: 1; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   51% { opacity: 1; transform: translate(-190px, -120px) scale(0.8) rotate(-5deg); }
-  54.5%, 95% { opacity: 1; transform: translate(0, 0) scale(1) rotate(2.5deg); }
-  97%, 100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(2.5deg); }
+  54.5%, 100% { opacity: 1; transform: translate(0, 0) scale(1) rotate(2.5deg); }
 }
 @keyframes kh-t3 {
   0%, 51.5% { opacity: 0; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   52.2% { opacity: 1; transform: translate(-360px, 14px) scale(0.3) rotate(0deg); }
   55.5% { opacity: 1; transform: translate(-190px, -120px) scale(0.8) rotate(-4deg); }
-  59%, 95% { opacity: 1; transform: translate(0, 0) scale(1) rotate(-0.5deg); }
-  97%, 100% { opacity: 0; transform: translate(0, 0) scale(1) rotate(-0.5deg); }
+  59%, 100% { opacity: 1; transform: translate(0, 0) scale(1) rotate(-0.5deg); }
+}
+/* The landed cards leave as one: faded one by one, each would show the one
+   under it through itself, and the text doubles up. */
+@keyframes kh-pile {
+  0%, 95% { opacity: 1; }
+  97%, 100% { opacity: 0; }
 }
 @keyframes kh-count {
   0%, 50% { transform: translateY(0); }
@@ -701,9 +705,11 @@ footer .wrap > div {
 <div style="position: absolute; left: 380px; top: 120px; width: 260px; height: 156px; box-sizing: border-box; border-radius: 12px; border: 2px dashed rgba(36, 31, 14, 0.35)"></div>
 <span class="vm" style="position: absolute; left: 380px; top: 90px; padding: 2px 9px; border-radius: 99px; background: #241F0E; color: #FFD029; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase">In Anki</span>
 
+<div class="anh h-pile" style="position: absolute; inset: 0">
 <div class="anh h-t1" style="position: absolute; left: 380px; top: 120px; width: 260px; height: 156px; box-sizing: border-box; padding: 16px 18px; display: grid; place-items: center; border-radius: 12px; background: #333B45; color: #D7DEE9; box-shadow: 0 16px 30px -14px rgba(36, 31, 14, 0.6); font-family: Menlo, 'SF Mono', ui-monospace, monospace; font-size: 14px; line-height: 1.5; text-align: center; opacity: 0"><span><span style="font-weight: bold; color: #3CB371">[what?]</span> is <i style="color: #CD5C5C">unmineralized bone matrix</i></span></div>
 <div class="anh h-t2" style="position: absolute; left: 380px; top: 120px; width: 260px; height: 156px; box-sizing: border-box; padding: 16px 18px; display: grid; place-items: center; border-radius: 12px; background: #333B45; color: #D7DEE9; box-shadow: 0 16px 30px -14px rgba(36, 31, 14, 0.6); font-family: Menlo, 'SF Mono', ui-monospace, monospace; font-size: 14px; line-height: 1.5; text-align: center; opacity: 0"><span><span style="font-weight: bold; color: #3CB371">[which cells?]</span> <u style="color: #5EB3B3">lay down</u> <i style="color: #CD5C5C">osteoid</i></span></div>
 <div class="anh h-t3" style="position: absolute; left: 380px; top: 120px; width: 260px; height: 156px; box-sizing: border-box; padding: 16px 18px; display: grid; place-items: center; border-radius: 12px; background: #333B45; color: #D7DEE9; box-shadow: 0 16px 30px -14px rgba(36, 31, 14, 0.6); font-family: Menlo, 'SF Mono', ui-monospace, monospace; font-size: 14px; line-height: 1.5; text-align: center; opacity: 0"><span><b style="color: #C695C6">Bone matrix</b> is <u style="color: #5EB3B3">made of</u> <span style="font-weight: bold; color: #3CB371">[which two parts?]</span></span></div>
+</div>
 
 <div style="position: absolute; left: 380px; top: 300px; width: 260px; display: flex; align-items: baseline; justify-content: space-between">
 <span class="vm" style="font-size: 13px; font-weight: 600">Histology::Bone</span>
