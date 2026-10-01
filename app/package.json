@@ -1,7 +1,7 @@
 {
   "name": "ape-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "Tauri shell over the A.P.E. engine: drop course material in, review cards, get a deck out.",
   "engines": {
