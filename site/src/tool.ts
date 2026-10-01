@@ -492,13 +492,10 @@ import { Bridge, locateBridge } from './engine/bridge-transport.js';
         import('./bridge-deck.js'),
       ]);
       const rail = $('rail');
-      const say = (text: string, isError = false): void => {
-        const status = rail.querySelector<HTMLElement>('#status');
-        if (!status) return;
-        status.textContent = text;
-        status.classList.toggle('error', isError);
-      };
-      mountAgentApp(bridge, {
+      // The deck view is made before the app it reports through.
+      let app: { say(text: string, isError?: boolean): void } | null = null;
+      const say = (text: string, isError = false): void => app?.say(text, isError);
+      app = mountAgentApp(bridge, {
         rail,
         bar: $('bar'),
         view: $('view-agent'),

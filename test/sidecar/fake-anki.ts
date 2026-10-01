@@ -20,13 +20,23 @@ export interface FakeAnki {
   decks: string[];
   media: { filename: string; path: string }[];
   notes: Record<string, unknown>[];
-  /** Field Text values that addNotes should refuse as duplicates (null id). */
+  /** Field Text values that addNotes should refuse as duplicates. */
   duplicates: Set<string>;
   close(): Promise<void>;
 }
 
-export async function startFakeAnki(opts: { models?: string[]; decks?: string[] } = {}): Promise<FakeAnki> {
+/**
+ * `strict` is AnkiConnect as it is now: addNotes fails the whole call when
+ * any note is refused, its error a Python list of one message per note.
+ * Without it, the older answer: a null id for each refused note.
+ */
+export async function startFakeAnki(opts: { models?: string[]; decks?: string[]; strict?: boolean } = {}): Promise<FakeAnki> {
   const state: Omit<FakeAnki, 'url' | 'close'> = { calls: [], models: opts.models ?? ['Basic', 'Cloze'], decks: opts.decks ?? ['Default'], media: [], notes: [], duplicates: new Set() };
+  const refusal = (n: Record<string, unknown>): string | null => {
+    if (!state.decks.includes(n.deckName as string)) return 'deck was not found';
+    if (state.duplicates.has((n.fields as Record<string, string>).Text)) return 'cannot create note because it is a duplicate';
+    return null;
+  };
   const server: Server = createServer((req, res) => {
     let body = '';
     req.on('data', (c: Buffer) => (body += c.toString('utf8')));
@@ -53,12 +63,14 @@ export async function startFakeAnki(opts: { models?: string[]; decks?: string[] 
         case 'storeMediaFile':
           state.media.push({ filename: params.filename as string, path: params.path as string });
           return reply(params.filename);
+        case 'canAddNotes':
+          return reply((params.notes as Record<string, unknown>[]).map((n) => refusal(n) === null));
         case 'addNotes': {
           const notes = params.notes as Record<string, unknown>[];
+          const refused = notes.map(refusal).filter((r) => r !== null);
+          if (opts.strict && refused.length) return reply(null, `[${refused.map((r) => `'${r}'`).join(', ')}]`);
           const ids = notes.map((n, i) => {
-            if (!state.decks.includes(n.deckName as string)) return null;
-            const text = (n.fields as Record<string, string>).Text;
-            if (state.duplicates.has(text)) return null;
+            if (refusal(n) !== null) return null;
             state.notes.push(n);
             return 1000 + i;
           });

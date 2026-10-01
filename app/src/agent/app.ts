@@ -35,7 +35,7 @@ import { extractMaterials } from './extract.js';
 import { mountHome, type Home } from './home.js';
 import { mountMaterials, type Materials } from './materials.js';
 import { mountFallbackPermissions } from './permission-any.js';
-import { mountPicker, type KeyStore, type Picker } from './picker.js';
+import { mountPicker, type AgentPhase, type KeyStore, type Picker } from './picker.js';
 import { mountSchool, type NewClass, type School } from './school.js';
 import { mountSettings, type Settings } from './settings.js';
 import { mountStages, type Stages } from './stages.js';
@@ -121,9 +121,12 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
     <nav class="library" id="rail-library" aria-label="Folders" hidden></nav>
     <nav class="library" id="rail-school" aria-label="Classes" hidden></nav>
     <div class="railfoot">
-      <div id="rail-agent" class="muted"></div>
+      <ul class="conns" aria-label="Connections">
+        <li class="conn" id="rail-agent"></li>
+        <li class="conn" id="rail-anki"></li>
+      </ul>
       <button type="button" id="rail-settings" class="quiet">Settings</button>
-      <div class="status" id="status"></div>
+      <div class="status" id="status" role="status"><span class="status-text"></span><button type="button" class="status-x" aria-label="Dismiss" title="Dismiss" hidden>×</button></div>
     </div>`;
   view.innerHTML = `<section class="home-pane" hidden></section><section class="school-pane" hidden></section><section class="settings-pane" hidden></section><section class="class-pane" hidden></section><section class="materials" hidden></section><section class="class-brief" hidden></section><section class="class-more" hidden></section><section class="gate" hidden></section><section class="agent-host" hidden></section>`;
   bar.className = 'nextbar';
@@ -137,10 +140,15 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
   bar.before(crumb);
   const $ = <T extends HTMLElement>(root: HTMLElement, sel: string): T => root.querySelector<T>(sel)!;
   const status = $<HTMLElement>(rail, '#status');
+  const statusText = $<HTMLElement>(status, '.status-text');
+  const statusX = $<HTMLButtonElement>(status, '.status-x');
   const say = (text: string, isError = false): void => {
-    status.textContent = text;
+    statusText.textContent = text;
     status.classList.toggle('error', isError);
+    statusX.hidden = !isError;
   };
+  // An error stays until something else is said; this is the way to put it away sooner.
+  statusX.addEventListener('click', () => say(''));
   const homeEl = $<HTMLElement>(view, '.home-pane');
   const schoolEl = $<HTMLElement>(view, '.school-pane');
   // Decks or School: the one chosen is remembered, and anyone who never switches never sees School.
@@ -271,6 +279,8 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
   // ---- the deck: a workspace -----------------------------------------------------
   let courseDir: string | null = null;
   let connection: ConnectResult | null = null;
+  /** Where a connect that has not landed is: the rail says so rather than "not connected". */
+  let agentPhase: AgentPhase = null;
   let chat: Chat | null = null;
   /** The class open as the workspace, or null while a deck (or nothing) is. courseDir is its folder. */
   let openClass: ClassSummary | null = null;
@@ -372,6 +382,7 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
       classSteps.setConnection(null);
       picker.setState({ connected: null });
     }
+    agentPhase = null;
     courseDir = null;
     openClass = null;
     deckClass = null;
@@ -851,6 +862,19 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
   // adjudicator's. Without this their write permissions went unanswered.
   mountFallbackPermissions(view, sidecar, bus, () => courseDir);
 
+  // ---- what is connected: the agent, and Anki --------------------------------------
+  // Two lines at the foot of the rail, each with a dot: green is there, amber
+  // is on its way or waiting on the person, red is wanted and missing, hollow
+  // is not needed yet.
+  type Tone = 'on' | 'busy' | 'warn' | 'bad' | 'off';
+  function setConn(el: HTMLElement, tone: Tone, text: string, note = ''): void {
+    const key = `${tone}|${text}|${note}`;
+    if (el.dataset.key === key) return; // Anki's is set every few seconds, mostly to what it was
+    el.dataset.key = key;
+    el.dataset.tone = tone;
+    el.innerHTML = `<span class="conn-dot" aria-hidden="true"></span><span class="conn-text">${esc(text)}${note ? `<span class="conn-note">${esc(note)}</span>` : ''}</span>`;
+  }
+
   // ---- the agent, as a setting --------------------------------------------------
   function showAgentLine(): void {
     const chosen = remember.get(REMEMBER.agent);
@@ -858,14 +882,28 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
     // Said where it is seen every day: an agent is never updated on its own,
     // and Settings is a screen nobody opens once the agent works.
     const newer = chosen ? picker.updateFor(chosen) : null;
-    $<HTMLElement>(rail, '#rail-agent').textContent =
-      (!name ? 'No agent chosen' : connection ? `${name} · connected` : `${name} · not connected`) + (newer ? ` · update ${newer} in Settings` : '');
+    // Its session opens in a deck's folder, so with none open there is nothing to connect yet.
+    const [tone, state]: [Tone, string] = connection
+      ? ['on', 'connected']
+      : agentPhase === 'connecting'
+        ? ['busy', 'connecting…']
+        : agentPhase === 'sign-in'
+          ? ['warn', 'sign-in needed — see Settings']
+          : !courseDir
+            ? ['off', 'connects when a deck opens']
+            : ['bad', 'not connected — see Settings'];
+    if (!name) setConn($<HTMLElement>(rail, '#rail-agent'), courseDir ? 'bad' : 'off', 'No agent chosen');
+    else setConn($<HTMLElement>(rail, '#rail-agent'), tone, `${name} · ${state}`, newer ? `update ${newer} in Settings` : '');
     home.setAgent(name);
   }
   let attaching: Promise<void> = Promise.resolve();
   const picker: Picker = mountPicker(settings.agentSlot, sidecar, bus, host.dataDir(), () => courseDir, opts.keys, {
     say,
     onListed: () => showAgentLine(),
+    onPhase(phase) {
+      agentPhase = phase;
+      showAgentLine();
+    },
     async release(id) {
       const running = busyNow();
       if (running) {
@@ -890,6 +928,7 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
       showAgentLine();
     },
     onConnected(result) {
+      agentPhase = null;
       if (!result.session || !courseDir) {
         say('connected but no session', true);
         return;
@@ -941,7 +980,12 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
       await deck.open(dir);
     },
     exportDeck: async () => (courseDir ? deck.export(courseDir) : null),
-    sendToAnki: async () => (courseDir ? deck.sendToAnki(courseDir) : null),
+    sendToAnki: async () => {
+      if (!courseDir) return null;
+      const r = await deck.sendToAnki(courseDir);
+      void anki.check();
+      return r;
+    },
     prepareMaterials: async (dir) => {
       await extractMaterials(sidecar, host, dir, say);
       await refreshMaterials();
@@ -967,6 +1011,36 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
     changed: classChanged,
   });
 
+  // ---- Anki, watched ---------------------------------------------------------------
+  // Asked every few seconds while the window is seen: AnkiConnect is a
+  // localhost endpoint, so the answer is instant either way. A send refused
+  // because Anki is closed leaves the dot red; once Anki answers, that error
+  // is stale and is taken down -- any other error stays where it is.
+  const anki = (() => {
+    const el = $<HTMLElement>(rail, '#rail-anki');
+    let open: boolean | null = null;
+    // The engine's words for it (NOT_OPEN in src/sidecar/anki.ts).
+    const saysClosed = (): boolean => status.classList.contains('error') && /^Anki is not open\b/.test(statusText.textContent ?? '');
+    const render = (): void => {
+      if (open) setConn(el, 'on', 'Anki · open');
+      else if (open === null) setConn(el, 'off', 'Anki · checking…');
+      else if (saysClosed()) setConn(el, 'bad', 'Anki · not open', 'open Anki, with AnkiConnect');
+      else setConn(el, 'off', 'Anki · not open');
+    };
+    // `always` for the first answer, so the line never sits on "checking…" in a window opened behind others.
+    const check = async (always = false): Promise<void> => {
+      if (document.hidden && !always) return;
+      open = await sidecar.ankiStatus().then((s) => s.reachable, () => false);
+      if (open && saysClosed()) say('Anki is open — send again when ready');
+      render();
+    };
+    render();
+    void check(true);
+    const timer = setInterval(() => void check(), 4000);
+    document.addEventListener('visibilitychange', () => void check());
+    return { check: () => check(true), stop: () => clearInterval(timer) };
+  })();
+
   // ---- start -------------------------------------------------------------------
   say(`engine ${host.info.version} on node ${host.info.node}`);
   show('home');
@@ -986,6 +1060,7 @@ export function mountAgentApp(host: EngineHost, opts: AgentAppOptions): AgentApp
   })();
 
   const dispose = async (): Promise<void> => {
+    anki.stop();
     await chat?.dispose();
     host.close();
   };

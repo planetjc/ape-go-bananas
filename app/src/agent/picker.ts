@@ -27,7 +27,12 @@ export interface PickerCallbacks {
   release(id: string): Promise<boolean>;
   /** The list was (re)read: what is installed, and what could be updated, may have changed. */
   onListed?(): void;
+  /** Where a connect is that has not landed (yet): null when it did, or was let go of. */
+  onPhase?(phase: AgentPhase): void;
 }
+
+/** A connect on its way, waiting on a sign-in, or refused; null for none. */
+export type AgentPhase = 'connecting' | 'sign-in' | 'failed' | null;
 
 /** Where an API key lives between sessions. Names are provider ids. */
 export interface KeyStore {
@@ -207,6 +212,7 @@ export function mountPicker(host: HTMLElement, sidecar: SidecarClient, bus: Bus,
       await keys.set(id, key).catch(() => undefined);
     }
     cb.say(`connecting ${p?.name ?? id}…`);
+    cb.onPhase?.('connecting');
     progress.set(id, ['connecting…']);
     render();
     try {
@@ -222,14 +228,17 @@ export function mountPicker(host: HTMLElement, sidecar: SidecarClient, bus: Bus,
       if (result.authRequired || (result.authStatus?.kind === 'none' && result.authMethods.length > 0)) {
         render();
         showAuth(result);
+        cb.onPhase?.('sign-in');
         cb.say(result.authStatus?.label ?? 'sign-in needed');
         return false;
       }
+      cb.onPhase?.(null);
       cb.onConnected(result);
       return true;
     } catch (err) {
       progress.delete(id);
       render();
+      cb.onPhase?.('failed');
       cb.say(err instanceof EngineError ? err.message : String(err), true);
       return false;
     }

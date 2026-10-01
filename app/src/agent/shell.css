@@ -125,11 +125,34 @@
 
 .railfoot { margin-top: auto; display: grid; gap: 9px; font-size: 12px; padding-top: 16px; border-top: 1px solid var(--line); }
 .railfoot button { justify-self: start; }
+/* What is connected: a dot and a line each for the agent and for Anki.
+   Green is there, amber on its way or waiting on the person, red wanted and
+   missing, hollow not needed yet. */
+.conns { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.conn { display: flex; align-items: flex-start; gap: 7px; color: var(--muted); }
+.conn-dot { flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.conn-note { display: block; color: var(--accent); }
+.conn[data-tone='on'] { color: var(--fg); }
+.conn[data-tone='on'] .conn-dot { background: var(--good); border-color: var(--good); }
+.conn[data-tone='busy'] .conn-dot, .conn[data-tone='warn'] .conn-dot { background: var(--warn); border-color: var(--warn); }
+.conn[data-tone='busy'] .conn-dot { animation: nb-pulse 1.4s ease-in-out infinite; }
+.conn[data-tone='bad'] { color: var(--bad); }
+.conn[data-tone='bad'] .conn-dot { background: var(--bad); border-color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .conn[data-tone='busy'] .conn-dot { animation: none; } }
+
 .status {
+  display: flex; align-items: flex-start; gap: 8px;
   font-size: 11px; color: var(--muted); word-break: break-word;
   font-family: var(--font-mono); font-variation-settings: var(--voice-mono);
 }
-.status.error { color: var(--bad); }
+.status-text { flex: 1; min-width: 0; }
+/* A long error scrolls inside its box rather than taking the rail. */
+.status.error { color: var(--bad); max-height: 10em; overflow: auto; padding: 8px 10px; }
+.status-x {
+  flex: none; position: sticky; top: 0; margin: -3px -5px 0 0; padding: 1px 5px;
+  background: transparent; color: inherit; font-size: 15px; line-height: 1; font-weight: 400; border-radius: 4px;
+}
+.status-x:hover { background: color-mix(in srgb, var(--bad) 15%, transparent); filter: none; }
 
 /* ---- the next-step bar ------------------------------------------------------ */
 /* The one thing that does not change between light and dark: a banana stripe

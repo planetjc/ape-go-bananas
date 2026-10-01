@@ -10,6 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test, { after } from 'node:test';
 
+import { tidyError } from '../../dist/sidecar/anki.js';
 import { startFakeAnki, type FakeAnki } from './fake-anki.ts';
 import { TIMEOUT, makeTmpDir, spawnSidecar, sweepSidecars } from './helpers.ts';
 
@@ -71,7 +72,7 @@ test('anki/send: creates the note type only when missing, the deck before the no
   assert.deepEqual(r, { decks: ['ISF::Biochemistry::Gene Expression'], total: 2, added: 2, skipped: 0, media: 1, unresolvedMedia: [], createdModel: true });
 
   const actions = fake.calls.map((c) => c.action);
-  assert.deepEqual(actions, ['version', 'modelNames', 'createModel', 'createDeck', 'storeMediaFile', 'addNotes'], 'the order AnkiConnect needs: type, deck, media, notes');
+  assert.deepEqual(actions, ['version', 'modelNames', 'createModel', 'createDeck', 'storeMediaFile', 'canAddNotes', 'addNotes'], 'the order AnkiConnect needs: type, deck, media, notes');
   const created = fake.calls.find((c) => c.action === 'createModel')!.params;
   assert.equal(created.modelName, 'Custom Cloze');
   assert.deepEqual(created.inOrderFields, ['Text', 'Extra', 'Source']);
@@ -84,10 +85,40 @@ test('anki/send: creates the note type only when missing, the deck before the no
   for (const n of fake.notes) fake.duplicates.add((n.fields as Record<string, string>).Text);
   const again = (await s.request(2, 'anki/send', { path: deckPath })).result as { added: number; skipped: number; createdModel: boolean };
   assert.deepEqual([again.added, again.skipped, again.createdModel], [0, 2, false]);
-  assert.ok(!fake.calls.slice(6).some((c) => c.action === 'createModel'), 'no second createModel');
+  const second = fake.calls.slice(7).map((c) => c.action);
+  assert.ok(!second.includes('createModel'), 'no second createModel');
+  assert.ok(!second.includes('addNotes'), 'nothing new, so nothing added');
 
   await fake.close();
   assert.equal(await s.end(), 0);
+});
+
+test('anki/send: a deck sent again to an AnkiConnect that fails a batch on any duplicate adds the new notes and counts the rest, without an error', { timeout: TIMEOUT }, async () => {
+  const fake = await startFakeAnki({ strict: true });
+  const { deckPath } = writeDeck(makeTmpDir('ape-sidecar-anki-'));
+  const s = spawnSidecar({ env: { APE_ANKI_CONNECT: fake.url } });
+  await s.ready;
+
+  assert.equal((await s.request(1, 'anki/send', { path: deckPath })).error, undefined);
+  // One already in Anki, one not: the first note stays as a duplicate, the second is gone.
+  const [kept] = fake.notes.splice(0);
+  fake.duplicates.add((kept!.fields as Record<string, string>).Text);
+  const res = await s.request(2, 'anki/send', { path: deckPath });
+  assert.equal(res.error, undefined, JSON.stringify(res.error));
+  const r = res.result as { added: number; skipped: number; total: number };
+  assert.deepEqual([r.added, r.skipped, r.total], [1, 1, 2]);
+  const sent = fake.calls.filter((c) => c.action === 'addNotes').at(-1)!.params.notes as unknown[];
+  assert.equal(sent.length, 1, 'only the note Anki can take is sent');
+
+  await fake.close();
+  assert.equal(await s.end(), 0);
+});
+
+test('tidyError: an AnkiConnect error list is said once per message, with a count', () => {
+  const dup = 'cannot create note because it is a duplicate';
+  assert.equal(tidyError(`['${dup}', '${dup}', '${dup}', "deck's gone"]`), `${dup} (3 notes); deck's gone`);
+  assert.equal(tidyError(`['${dup}']`), dup);
+  assert.equal(tidyError('collection is not available'), 'collection is not available');
 });
 
 test('anki/send: deckName overrides every note\'s own; Anki closed is -32000 in words; a missing path is -32602', { timeout: TIMEOUT }, async () => {

@@ -112,7 +112,8 @@ export function makeBridgeDeckView(sidecar: SidecarClient, host: EngineHost, say
     async sendToAnki(dir) {
       try {
         const r = await sidecar.sendToAnki(`${dir.replace(/[\\/]$/, '')}/deck.json`);
-        say(`Anki: ${r.added} of ${r.total} added to ${r.decks.join(', ')}${r.skipped ? ` · ${r.skipped} already there` : ''}${r.unresolvedMedia.length ? ` · missing media: ${r.unresolvedMedia.join(', ')}` : ''}`, r.unresolvedMedia.length > 0);
+        const added = r.added === 0 && r.total > 0 ? `nothing new — all ${r.total} already in ${r.decks.join(', ')}` : `${r.added} of ${r.total} added to ${r.decks.join(', ')}${r.skipped ? ` · ${r.skipped} already there` : ''}`;
+        say(`Anki: ${added}${r.unresolvedMedia.length ? ` · missing media: ${r.unresolvedMedia.join(', ')}` : ''}`, r.unresolvedMedia.length > 0);
         return r;
       } catch (err) {
         say(err instanceof EngineError ? err.message : String(err), true);

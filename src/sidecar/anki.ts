@@ -22,6 +22,7 @@ import { InvalidParams, type MethodHandler } from './methods.js';
 /** AnkiConnect's default; APE_ANKI_CONNECT overrides it (tests point it at a fake). */
 export const ANKI_CONNECT_URL = process.env.APE_ANKI_CONNECT ?? 'http://127.0.0.1:8765';
 const ADDON_CODE = '2055492159';
+// The app takes this line down once Anki answers, by its start (app/src/agent/app.ts, "Anki, watched").
 export const NOT_OPEN = `Anki is not open, or the AnkiConnect add-on (code ${ADDON_CODE}) is not installed. Open Anki and try again.`;
 
 export interface AnkiStatus {
@@ -62,8 +63,23 @@ async function invoke<T>(url: string, action: string, params?: Record<string, un
   }
   if (!res.ok) throw new Error(`AnkiConnect answered ${res.status} to ${action}`);
   const body = (await res.json()) as { result?: T; error?: string | null };
-  if (body.error) throw new Error(`AnkiConnect: ${body.error}`);
+  if (body.error) throw new Error(`AnkiConnect: ${tidyError(body.error)}`);
   return body.result as T;
+}
+
+/**
+ * AnkiConnect's errors for a batch are a Python list printed as a string,
+ * one entry per note -- "['cannot create note because it is a duplicate',
+ * …]" a hundred times over. Said once each, with how many.
+ */
+export function tidyError(error: string): string {
+  const list = error.trim();
+  if (!list.startsWith('[') || !list.endsWith(']')) return error;
+  const items = [...list.matchAll(/(['"])(.*?)\1/gs)].map((m) => m[2]!);
+  if (!items.length) return error;
+  const counts = new Map<string, number>();
+  for (const item of items) counts.set(item, (counts.get(item) ?? 0) + 1);
+  return [...counts].map(([text, n]) => (n > 1 ? `${text} (${n} notes)` : text)).join('; ');
 }
 
 export async function ankiStatus(url = ANKI_CONNECT_URL): Promise<AnkiStatus> {
@@ -117,9 +133,14 @@ export async function sendDeck(path: string, deckName?: string, url = ANKI_CONNE
     stored += 1;
   }
 
-  const ids = await invoke<(number | null)[]>(url, 'addNotes', {
-    notes: placed.map((n) => ({ deckName: n.deckName, modelName: n.modelName, fields: n.fields, tags: n.tags ?? [], options: { allowDuplicate: false, duplicateScope: 'deck' } })),
-  });
+  // Only the notes Anki will take. Older AnkiConnect answered a duplicate
+  // with a null id; newer versions fail the whole addNotes call with one
+  // error per refused note, so a deck sent twice came back as a wall of
+  // "cannot create note because it is a duplicate". canAddNotes is in both.
+  const asked = placed.map((n) => ({ deckName: n.deckName, modelName: n.modelName, fields: n.fields, tags: n.tags ?? [], options: { allowDuplicate: false, duplicateScope: 'deck' } }));
+  const can = await invoke<boolean[]>(url, 'canAddNotes', { notes: asked });
+  const fresh = asked.filter((_, i) => can[i] !== false);
+  const ids = fresh.length ? await invoke<(number | null)[]>(url, 'addNotes', { notes: fresh }) : [];
   const added = ids.filter((id) => id !== null).length;
   return { decks, total: placed.length, added, skipped: placed.length - added, media: stored, unresolvedMedia, createdModel };
 }

@@ -188,8 +188,8 @@ function makeDeckView(sidecar: SidecarClient, say: (text: string, isError?: bool
   async function sendPath(path: string): Promise<SendToAnkiResult | null> {
     try {
       const r = await sidecar.sendToAnki(path);
-      const bits = [`${r.added} of ${r.total} added to ${r.decks.join(', ')}`];
-      if (r.skipped) bits.push(`${r.skipped} already there`);
+      const bits = [r.added === 0 && r.total > 0 ? `nothing new — all ${r.total} already in ${r.decks.join(', ')}` : `${r.added} of ${r.total} added to ${r.decks.join(', ')}`];
+      if (r.skipped && r.added) bits.push(`${r.skipped} already there`);
       if (r.media) bits.push(`${r.media} image${r.media === 1 ? '' : 's'} stored`);
       if (r.createdModel) bits.push('note type created');
       if (r.unresolvedMedia.length) bits.push(`missing media: ${r.unresolvedMedia.join(', ')}`);

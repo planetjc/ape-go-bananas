@@ -603,7 +603,15 @@ export function mountStages(rail: HTMLOListElement, bar: HTMLElement, gate: HTML
     host.say('sending to Anki…');
     const r = await host.sendToAnki();
     if (r === null) return renderBar();
-    sentToAnki = `${r.added} of ${r.total} card${r.total === 1 ? '' : 's'} in ${r.decks.join(', ')}`;
+    // A deck sent again is all duplicates: that is not a failure, just nothing new.
+    const cards = (n: number) => `${n} card${n === 1 ? '' : 's'}`;
+    const where = r.decks.join(', ');
+    sentToAnki =
+      r.added === 0 && r.total > 0
+        ? `${r.total === 1 ? 'The card was' : `All ${cards(r.total)} were`} already in ${where}`
+        : r.skipped > 0
+          ? `${cards(r.added)} added to ${where}; ${r.skipped} ${r.skipped === 1 ? 'was' : 'were'} already there`
+          : `${r.added} of ${cards(r.total)} in ${where}`;
     renderBar();
   }
 
